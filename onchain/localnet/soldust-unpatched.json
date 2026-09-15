@@ -1,0 +1,3727 @@
+{
+  "address": "CoriumcqGZW3cdnAiyWz6jHHveMUmdrw9RC1KXfMsF8S",
+  "metadata": {
+    "name": "soldust",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "SOLDUST - on-chain star lifecycle (devnet MVP)"
+  },
+  "instructions": [
+    {
+      "name": "claim_hole_share",
+      "docs": [
+        "An early feeder collects their share of a collapsed star."
+      ],
+      "discriminator": [
+        62,
+        125,
+        59,
+        132,
+        241,
+        50,
+        54,
+        152
+      ],
+      "accounts": [
+        {
+          "name": "player",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "feed_share"
+          ]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "star",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  97,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "star.star_id",
+                "account": "Star"
+              }
+            ]
+          }
+        },
+        {
+          "name": "star_feed",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "star.star_id",
+                "account": "Star"
+              }
+            ]
+          }
+        },
+        {
+          "name": "feed_share",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  100,
+                  45,
+                  115,
+                  104,
+                  97,
+                  114,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "star.star_id",
+                "account": "Star"
+              },
+              {
+                "kind": "account",
+                "path": "player"
+              }
+            ]
+          }
+        },
+        {
+          "name": "player_stats",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "player"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "claim_prize",
+      "docs": [
+        "The Star Killer collects the jackpot."
+      ],
+      "discriminator": [
+        157,
+        233,
+        139,
+        121,
+        246,
+        62,
+        234,
+        235
+      ],
+      "accounts": [
+        {
+          "name": "winner",
+          "docs": [
+            "Checked against `star.killer` in the handler (the star account is",
+            "deserialized after this one)."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "star",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  97,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "star.star_id",
+                "account": "Star"
+              }
+            ]
+          }
+        },
+        {
+          "name": "player_stats",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "winner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "close_push",
+      "docs": [
+        "Return a finished push account's rent to the player. Optional cleanup."
+      ],
+      "discriminator": [
+        120,
+        21,
+        183,
+        116,
+        6,
+        235,
+        255,
+        202
+      ],
+      "accounts": [
+        {
+          "name": "pending_push",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  117,
+                  115,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pending_push.player",
+                "account": "PendingPush"
+              },
+              {
+                "kind": "account",
+                "path": "pending_push.client_seed",
+                "account": "PendingPush"
+              }
+            ]
+          }
+        },
+        {
+          "name": "player_wallet",
+          "docs": [
+            "only there. Not `SystemAccount` for the same reason as the refund",
+            "destination above - see `ResolvePush::player_wallet`."
+          ],
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "close_round",
+      "docs": [
+        "Seal the star's open round and fix its ORAO seed. Permissionless, moves",
+        "no lamports. Allowed once the round's window has elapsed or it is already",
+        "full enough that waiting would only add latency - and once the batch's",
+        "own rake covers what ORAO currently charges for a draw. A round that has",
+        "not earned its draw yet stays open and keeps collecting members."
+      ],
+      "discriminator": [
+        149,
+        14,
+        81,
+        88,
+        230,
+        226,
+        234,
+        37
+      ],
+      "accounts": [
+        {
+          "name": "cranker",
+          "docs": [
+            "Anyone. Touches no lamports at all."
+          ],
+          "signer": true
+        },
+        {
+          "name": "star",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  97,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round.star_id",
+                "account": "Round"
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round.star_id",
+                "account": "Round"
+              },
+              {
+                "kind": "account",
+                "path": "round.round_id",
+                "account": "Round"
+              }
+            ]
+          }
+        },
+        {
+          "name": "slot_hashes",
+          "docs": [
+            "`vrf::recent_slot_hash`. Sampled here for seed material only."
+          ]
+        },
+        {
+          "name": "vrf_network_state",
+          "docs": [
+            "to price the draw this seal commits the house to buying. No CPI."
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "create_first_star",
+      "docs": [
+        "Birth star #1. Permissionless, once. Uses `Config.genesis_seed`."
+      ],
+      "discriminator": [
+        22,
+        72,
+        215,
+        69,
+        58,
+        55,
+        130,
+        194
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "star",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  97,
+                  114
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  1,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "create_next_star",
+      "docs": [
+        "Birth the next star after the current one has died. Permissionless."
+      ],
+      "discriminator": [
+        143,
+        3,
+        64,
+        188,
+        141,
+        44,
+        96,
+        109
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "docs": [
+            "Permissionless. Pays rent for the new star account."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "prev_star",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  97,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config.current_star_id",
+                "account": "Config"
+              }
+            ]
+          }
+        },
+        {
+          "name": "next_star",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  97,
+                  114
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "new_star_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "new_star_id",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "expire_round",
+      "docs": [
+        "Void a round that has been stalled for `ROUND_EXPIRY_SLOTS`, making all",
+        "of its members refundable. Permissionless. Refuses if the draw has",
+        "already landed, so it can never be used to duck an unfavourable roll."
+      ],
+      "discriminator": [
+        238,
+        222,
+        71,
+        141,
+        104,
+        222,
+        76,
+        248
+      ],
+      "accounts": [
+        {
+          "name": "cranker",
+          "signer": true
+        },
+        {
+          "name": "star",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  97,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round.star_id",
+                "account": "Round"
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round.star_id",
+                "account": "Round"
+              },
+              {
+                "kind": "account",
+                "path": "round.round_id",
+                "account": "Round"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vrf_request",
+          "docs": [
+            "the draw has *not* landed. Ignored while the round never got as far as",
+            "being requested, in which case the address is still default."
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "feed",
+      "docs": [
+        "Nursery hole ticket. One signature, instant settle, no VRF.",
+        "Clips to leftover room; fails if the nursery is already full."
+      ],
+      "discriminator": [
+        46,
+        213,
+        237,
+        176,
+        190,
+        113,
+        182,
+        94
+      ],
+      "accounts": [
+        {
+          "name": "player",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "star",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  97,
+                  114
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "star_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "player_stats",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "player"
+              }
+            ]
+          }
+        },
+        {
+          "name": "star_feed",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  100
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "star_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "feed_share",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  100,
+                  45,
+                  115,
+                  104,
+                  97,
+                  114,
+                  101
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "star_id"
+              },
+              {
+                "kind": "account",
+                "path": "player"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "star_id",
+          "type": "u64"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "fund_protocol",
+      "docs": [
+        "Donate lamports into the protocol balance, which is what randomness is",
+        "bought out of. Needed once at bootstrap, because the rake cannot accrue",
+        "until a push settles and a push cannot settle until a draw is paid for."
+      ],
+      "discriminator": [
+        101,
+        139,
+        145,
+        45,
+        237,
+        109,
+        90,
+        180
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "initialize",
+      "docs": [
+        "Create `Config` and the vault. Once, by whoever deploys. The signer is",
+        "only a payer - no authority is stored, because none is ever used.",
+        "",
+        "* `genesis_seed` - visual seed for star #1. Later stars derive theirs",
+        "from their predecessor's death randomness.",
+        "* `treasury` - where `withdraw_protocol_fees` sends protocol revenue."
+      ],
+      "discriminator": [
+        175,
+        175,
+        109,
+        31,
+        13,
+        152,
+        155,
+        237
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "docs": [
+            "Pays rent for `Config` and tops the vault up to rent exemption."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "docs": [
+            "The one SOL vault. System-owned with zero data, so the program can",
+            "move lamports out with a signed `system_program::transfer` and nothing",
+            "else can touch it."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "genesis_seed",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "request_push",
+      "docs": [
+        "Last-hit: escrow the stake and join the star's open round. The player's",
+        "only signature, and the only lamports it moves are the stake - the draw",
+        "this push will roll against is bought later, once, for the whole round,",
+        "out of the protocol's own balance.",
+        "",
+        "* `star_id` - must be the current live star; recorded permanently on",
+        "the push so it can never roll forward to a later star.",
+        "* `client_seed` - 32 random bytes from the client. Two jobs: it scopes",
+        "this push's address within the player's own wallet, and it is folded",
+        "into the round's entropy accumulator. It is *not* a VRF seed, so",
+        "reusing one after `close_push` is harmless."
+      ],
+      "discriminator": [
+        42,
+        122,
+        209,
+        218,
+        38,
+        173,
+        111,
+        74
+      ],
+      "accounts": [
+        {
+          "name": "player",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "star",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  97,
+                  114
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "star_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "docs": [
+            "The star's open round. Created by whoever gets there first and shared by",
+            "everyone who arrives before it is sealed.",
+            "",
+            "Pinned to `star.current_round` by seed, so a player cannot pick which",
+            "round to join - in particular they cannot re-join a round whose seed is",
+            "already fixed, because `close_round` bumps this counter as it seals."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "star_id"
+              },
+              {
+                "kind": "account",
+                "path": "star.current_round",
+                "account": "Star"
+              }
+            ]
+          }
+        },
+        {
+          "name": "player_stats",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "player"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pending_push",
+          "docs": [
+            "Scoped to the player so two people pushing in the same slot can never",
+            "collide on this address, and `init` stops one player double-spending a",
+            "`client_seed` that is still in flight. Reuse after `close_push` is",
+            "harmless now: `client_seed` only feeds round entropy and this PDA, and",
+            "`push_id` comes from the star's counter, which never repeats."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  117,
+                  115,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "player"
+              },
+              {
+                "kind": "arg",
+                "path": "client_seed"
+              }
+            ]
+          }
+        },
+        {
+          "name": "star_feed",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  100
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "star_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "feed_share",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  100,
+                  45,
+                  115,
+                  104,
+                  97,
+                  114,
+                  101
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "star_id"
+              },
+              {
+                "kind": "account",
+                "path": "player"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "star_id",
+          "type": "u64"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "client_seed",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "request_round_vrf",
+      "docs": [
+        "Buy the one draw that serves a sealed round. Permissionless; the signer",
+        "fronts ORAO and is reimbursed from `protocol_accrued`, capped at what the",
+        "rake actually holds so the game cannot stall for lack of funds."
+      ],
+      "discriminator": [
+        128,
+        146,
+        111,
+        16,
+        133,
+        175,
+        53,
+        5
+      ],
+      "accounts": [
+        {
+          "name": "cranker",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round.star_id",
+                "account": "Round"
+              },
+              {
+                "kind": "account",
+                "path": "round.round_id",
+                "account": "Round"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vrf_program",
+          "address": "VRFzZoJdhFWL8rkvu87LpKM3RbcVezpMEc6X5GVDr7y"
+        },
+        {
+          "name": "vrf_network_state",
+          "writable": true
+        },
+        {
+          "name": "vrf_treasury",
+          "writable": true
+        },
+        {
+          "name": "vrf_request",
+          "docs": [
+            "sealed seed derives, and must not exist yet."
+          ],
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "resolve_push",
+      "docs": [
+        "Settle or refund a push. Permissionless; the player never signs again.",
+        "While the star is alive, `push_id` must equal `star.settle_cursor`.",
+        "A refund does not require fulfilled randomness."
+      ],
+      "discriminator": [
+        189,
+        123,
+        57,
+        235,
+        12,
+        50,
+        143,
+        8
+      ],
+      "accounts": [
+        {
+          "name": "resolver",
+          "docs": [
+            "Anyone. Pays the transaction fee and nothing else - every account this",
+            "instruction touches already exists."
+          ],
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "pending_push",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  117,
+                  115,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pending_push.player",
+                "account": "PendingPush"
+              },
+              {
+                "kind": "account",
+                "path": "pending_push.client_seed",
+                "account": "PendingPush"
+              }
+            ]
+          }
+        },
+        {
+          "name": "star",
+          "docs": [
+            "Pinned by seed to the star the push was aimed at, so a draw can never be",
+            "resolved against a different star."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  97,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pending_push.star_id",
+                "account": "PendingPush"
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "docs": [
+            "Pinned by seed to the round this push joined, so it can only ever settle",
+            "against the draw it committed to before that draw's seed existed."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pending_push.star_id",
+                "account": "PendingPush"
+              },
+              {
+                "kind": "account",
+                "path": "pending_push.round_id",
+                "account": "PendingPush"
+              }
+            ]
+          }
+        },
+        {
+          "name": "player_stats",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  108,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pending_push.player",
+                "account": "PendingPush"
+              }
+            ]
+          }
+        },
+        {
+          "name": "player_wallet",
+          "docs": [
+            "else. Deliberately *not* `SystemAccount`: that would additionally",
+            "require the wallet to still be owned by the system program, and a",
+            "player who assigns their account to some other program - which the",
+            "system program lets them do with their own signature, irreversibly -",
+            "would have their stake locked in the vault forever with no instruction",
+            "able to release it. A system transfer only constrains its source, so",
+            "paying out to a non-system account is perfectly legal."
+          ],
+          "writable": true
+        },
+        {
+          "name": "vrf_request",
+          "docs": [
+            "and seed are all re-checked before use, and `round.status` must be",
+            "`Requested`, so only a draw this program bought can ever be read."
+          ]
+        },
+        {
+          "name": "star_feed",
+          "docs": [
+            "Both of these were created and paid for by `request_push`, so the",
+            "resolver never funds an account here."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pending_push.star_id",
+                "account": "PendingPush"
+              }
+            ]
+          }
+        },
+        {
+          "name": "feed_share",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  100,
+                  45,
+                  115,
+                  104,
+                  97,
+                  114,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pending_push.star_id",
+                "account": "PendingPush"
+              },
+              {
+                "kind": "account",
+                "path": "pending_push.player",
+                "account": "PendingPush"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "withdraw_protocol_fees",
+      "docs": [
+        "Move accrued protocol revenue to the treasury frozen at initialize.",
+        "Anyone can crank it. Cannot touch escrowed pushes or unclaimed prizes."
+      ],
+      "discriminator": [
+        11,
+        68,
+        165,
+        98,
+        18,
+        208,
+        134,
+        73
+      ],
+      "accounts": [
+        {
+          "name": "crank",
+          "docs": [
+            "Anyone. Pays the transaction fee."
+          ],
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "writable": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Config",
+      "discriminator": [
+        155,
+        12,
+        170,
+        224,
+        30,
+        250,
+        204,
+        130
+      ]
+    },
+    {
+      "name": "FeedShare",
+      "discriminator": [
+        107,
+        193,
+        11,
+        74,
+        194,
+        171,
+        115,
+        220
+      ]
+    },
+    {
+      "name": "PendingPush",
+      "discriminator": [
+        63,
+        221,
+        105,
+        254,
+        6,
+        174,
+        246,
+        237
+      ]
+    },
+    {
+      "name": "Player",
+      "discriminator": [
+        205,
+        222,
+        112,
+        7,
+        165,
+        155,
+        206,
+        218
+      ]
+    },
+    {
+      "name": "Round",
+      "discriminator": [
+        87,
+        127,
+        165,
+        51,
+        73,
+        78,
+        116,
+        174
+      ]
+    },
+    {
+      "name": "Star",
+      "discriminator": [
+        214,
+        131,
+        207,
+        208,
+        202,
+        148,
+        162,
+        48
+      ]
+    },
+    {
+      "name": "StarFeed",
+      "discriminator": [
+        139,
+        39,
+        149,
+        236,
+        27,
+        199,
+        241,
+        93
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "HoleShareClaimed",
+      "discriminator": [
+        1,
+        164,
+        206,
+        17,
+        218,
+        118,
+        247,
+        188
+      ]
+    },
+    {
+      "name": "PrizeClaimed",
+      "discriminator": [
+        213,
+        150,
+        192,
+        76,
+        199,
+        33,
+        212,
+        38
+      ]
+    },
+    {
+      "name": "ProtocolFeesWithdrawn",
+      "discriminator": [
+        202,
+        213,
+        134,
+        216,
+        108,
+        14,
+        84,
+        99
+      ]
+    },
+    {
+      "name": "ProtocolFunded",
+      "discriminator": [
+        238,
+        231,
+        17,
+        62,
+        55,
+        130,
+        140,
+        215
+      ]
+    },
+    {
+      "name": "PushCancelled",
+      "discriminator": [
+        170,
+        234,
+        12,
+        232,
+        154,
+        161,
+        35,
+        51
+      ]
+    },
+    {
+      "name": "PushRequested",
+      "discriminator": [
+        168,
+        92,
+        81,
+        6,
+        39,
+        78,
+        81,
+        19
+      ]
+    },
+    {
+      "name": "PushResolved",
+      "discriminator": [
+        24,
+        171,
+        178,
+        68,
+        204,
+        140,
+        47,
+        72
+      ]
+    },
+    {
+      "name": "RoundClosed",
+      "discriminator": [
+        45,
+        243,
+        28,
+        22,
+        132,
+        70,
+        175,
+        226
+      ]
+    },
+    {
+      "name": "RoundExpired",
+      "discriminator": [
+        93,
+        120,
+        89,
+        173,
+        92,
+        124,
+        70,
+        38
+      ]
+    },
+    {
+      "name": "RoundRequested",
+      "discriminator": [
+        150,
+        253,
+        124,
+        52,
+        139,
+        236,
+        253,
+        190
+      ]
+    },
+    {
+      "name": "StageChanged",
+      "discriminator": [
+        80,
+        170,
+        27,
+        200,
+        87,
+        116,
+        78,
+        98
+      ]
+    },
+    {
+      "name": "StarCollapsed",
+      "discriminator": [
+        59,
+        132,
+        111,
+        227,
+        193,
+        22,
+        242,
+        39
+      ]
+    },
+    {
+      "name": "StarCreated",
+      "discriminator": [
+        194,
+        249,
+        241,
+        53,
+        119,
+        24,
+        63,
+        215
+      ]
+    },
+    {
+      "name": "StarDestroyed",
+      "discriminator": [
+        79,
+        224,
+        25,
+        25,
+        122,
+        12,
+        255,
+        149
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "MathOverflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6001,
+      "name": "NotCurrentStar",
+      "msg": "The requested star is not the current star"
+    },
+    {
+      "code": 6002,
+      "name": "StarNotAlive",
+      "msg": "The star is not alive"
+    },
+    {
+      "code": 6003,
+      "name": "StarNotDead",
+      "msg": "The star is not dead yet"
+    },
+    {
+      "code": 6004,
+      "name": "StarNotBlackHole",
+      "msg": "The star is not a black hole"
+    },
+    {
+      "code": 6005,
+      "name": "NoFeedShare",
+      "msg": "No hole ticket on this star"
+    },
+    {
+      "code": 6006,
+      "name": "HoleShareAlreadyClaimed",
+      "msg": "This hole share has already been claimed"
+    },
+    {
+      "code": 6007,
+      "name": "FirstStarAlreadyCreated",
+      "msg": "A star already exists; use create_next_star"
+    },
+    {
+      "code": 6008,
+      "name": "NextStarAlreadyCreated",
+      "msg": "The next star has already been created for this star"
+    },
+    {
+      "code": 6009,
+      "name": "PushAmountOutOfRange",
+      "msg": "Push amount must be greater than zero"
+    },
+    {
+      "code": 6010,
+      "name": "PushNotOnStep",
+      "msg": "Push amount must be an exact multiple of 0.01 SOL"
+    },
+    {
+      "code": 6011,
+      "name": "PushAlreadyResolved",
+      "msg": "This push has already been resolved"
+    },
+    {
+      "code": 6012,
+      "name": "PushStillPending",
+      "msg": "This push is still pending"
+    },
+    {
+      "code": 6013,
+      "name": "PushStarMismatch",
+      "msg": "The push does not belong to the supplied star"
+    },
+    {
+      "code": 6014,
+      "name": "PushPlayerMismatch",
+      "msg": "The supplied player account does not own this push"
+    },
+    {
+      "code": 6015,
+      "name": "RandomnessAccountMismatch",
+      "msg": "The supplied randomness account does not match the push"
+    },
+    {
+      "code": 6016,
+      "name": "RandomnessNotReady",
+      "msg": "Randomness has not been fulfilled yet; retry later"
+    },
+    {
+      "code": 6017,
+      "name": "InvalidVrfAccountOwner",
+      "msg": "The randomness account is not owned by the VRF program"
+    },
+    {
+      "code": 6018,
+      "name": "MalformedVrfAccount",
+      "msg": "The randomness account layout could not be parsed"
+    },
+    {
+      "code": 6019,
+      "name": "RandomnessSeedMismatch",
+      "msg": "The randomness account seed does not match the push seed"
+    },
+    {
+      "code": 6020,
+      "name": "InvalidVrfProgram",
+      "msg": "Incorrect VRF program supplied"
+    },
+    {
+      "code": 6021,
+      "name": "InvalidVrfNetworkState",
+      "msg": "Incorrect ORAO network state account supplied"
+    },
+    {
+      "code": 6022,
+      "name": "NotStarKiller",
+      "msg": "Only the star killer may claim this prize"
+    },
+    {
+      "code": 6023,
+      "name": "PrizeAlreadyClaimed",
+      "msg": "The prize for this star has already been claimed"
+    },
+    {
+      "code": 6024,
+      "name": "InsufficientUnreservedFunds",
+      "msg": "Withdrawal would dip into reserved player funds"
+    },
+    {
+      "code": 6025,
+      "name": "ExceedsAccruedFees",
+      "msg": "Requested amount exceeds accrued protocol fees"
+    },
+    {
+      "code": 6026,
+      "name": "PushOutOfOrder",
+      "msg": "A live star must settle pushes in push_id order"
+    },
+    {
+      "code": 6027,
+      "name": "FeedWindowClosed",
+      "msg": "This feed missed the nursery; SOL was not taken"
+    },
+    {
+      "code": 6028,
+      "name": "LastHitNotOpen",
+      "msg": "Last-hit pushes start after the nursery is full"
+    },
+    {
+      "code": 6029,
+      "name": "VrfAlreadyRequested",
+      "msg": "Randomness has already been requested for this round"
+    },
+    {
+      "code": 6030,
+      "name": "StarClosed",
+      "msg": "This star has already committed its full mass"
+    },
+    {
+      "code": 6031,
+      "name": "StarStillOpen",
+      "msg": "The previous star is still open"
+    },
+    {
+      "code": 6032,
+      "name": "NotCurrentRound",
+      "msg": "The supplied round is not the star's open round"
+    },
+    {
+      "code": 6033,
+      "name": "PushRoundMismatch",
+      "msg": "The push does not belong to the supplied round"
+    },
+    {
+      "code": 6034,
+      "name": "RoundNotOpen",
+      "msg": "This round is no longer accepting pushes"
+    },
+    {
+      "code": 6035,
+      "name": "RoundNotClosed",
+      "msg": "This round has not been closed yet"
+    },
+    {
+      "code": 6036,
+      "name": "RoundNotRequested",
+      "msg": "This round's draw has not been requested yet"
+    },
+    {
+      "code": 6037,
+      "name": "RoundNotCloseable",
+      "msg": "This round is still open for pushes or waiting on its draw"
+    },
+    {
+      "code": 6038,
+      "name": "RoundNotExpired",
+      "msg": "This round has not been stalled long enough to void"
+    },
+    {
+      "code": 6039,
+      "name": "RoundExpired",
+      "msg": "This round has already been voided"
+    },
+    {
+      "code": 6040,
+      "name": "RoundEmpty",
+      "msg": "This round has no members"
+    },
+    {
+      "code": 6041,
+      "name": "RoundBelowDrawCost",
+      "msg": "This round's stake does not cover a draw yet; it stays open for more members"
+    },
+    {
+      "code": 6042,
+      "name": "InvalidSlotHashes",
+      "msg": "The SlotHashes sysvar account is missing or malformed"
+    }
+  ],
+  "types": [
+    {
+      "name": "Config",
+      "docs": [
+        "Singleton game state: where the money is owed, and which star is live.",
+        "",
+        "It holds no tunable parameters. Odds, bounds and splits are compiled into",
+        "[`game_config`](crate::game_config) and cannot be changed by any",
+        "instruction."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "treasury",
+            "docs": [
+              "Destination for `withdraw_protocol_fees`. Frozen at initialize."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "current_star_id",
+            "docs": [
+              "0 until the first star is created."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "stars_created",
+            "type": "u64"
+          },
+          {
+            "name": "genesis_seed",
+            "docs": [
+              "Visual seed for star #1. Later stars hash the previous star's seed."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "pending_liability",
+            "docs": [
+              "Stake escrowed by pushes that have not been settled or refunded yet.",
+              "Not part of any jackpot until the push resolves against a live star."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "prize_liability",
+            "docs": [
+              "Prize money owed to (current + past) star killers, claimed or not."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "protocol_accrued",
+            "docs": [
+              "Protocol revenue, and the float randomness is bought out of. The only",
+              "balance `withdraw_protocol_fees` can touch, and the only balance",
+              "`request_round_vrf` can reimburse a crank from."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "next_star_reserve",
+            "docs": [
+              "Recycled prize waiting to seed the next star. Not withdrawable."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "total_pushes_settled",
+            "type": "u64"
+          },
+          {
+            "name": "total_volume",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "vault_bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeedShare",
+      "docs": [
+        "One wallet's hole ticket on one star."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "star_id",
+            "type": "u64"
+          },
+          {
+            "name": "player",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "claimed",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "HoleShareClaimed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "star_id",
+            "type": "u64"
+          },
+          {
+            "name": "player",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "claimed_ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LifecycleConfig",
+      "docs": [
+        "The stage table, frozen onto each star at birth."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "stage_count",
+            "type": "u8"
+          },
+          {
+            "name": "stages",
+            "type": {
+              "array": [
+                {
+                  "defined": {
+                    "name": "StageConfig"
+                  }
+                },
+                7
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "PendingPush",
+      "docs": [
+        "One push. Created when the player signs, permanently bound to the star",
+        "they meant to push and to the round whose draw decides its fate.",
+        "",
+        "Field order up to `amount` is fixed by the Android hand-decoder, same as",
+        "[`Star`]; see the layout test at the bottom of this file."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "star_id",
+            "docs": [
+              "The star this push was aimed at. Never rolls forward to a later star."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "push_id",
+            "type": "u64"
+          },
+          {
+            "name": "player",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "docs": [
+              "Escrowed stake, in lamports."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "round_id",
+            "docs": [
+              "The draw this push shares. Recorded at request time, before that draw's",
+              "seed is decidable, which is the entire anti-grinding argument. Filed",
+              "after `amount` rather than next to `push_id` so the two offsets above",
+              "stayed where the hand-decoder already looks."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "PushStatus"
+              }
+            }
+          },
+          {
+            "name": "requested_ts",
+            "type": "i64"
+          },
+          {
+            "name": "requested_slot",
+            "type": "u64"
+          },
+          {
+            "name": "resolved_ts",
+            "type": "i64"
+          },
+          {
+            "name": "resolved_slot",
+            "type": "u64"
+          },
+          {
+            "name": "roll_ppb",
+            "docs": [
+              "Populated on a settled (non-cancelled) resolve."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "threshold_ppb",
+            "type": "u32"
+          },
+          {
+            "name": "chance_ppb",
+            "docs": [
+              "Nova chance quoted at request time, against committed mass. For",
+              "display only: the authoritative threshold is computed at settle from",
+              "settled mass and written to `threshold_ppb`. The two differ when the",
+              "queue moved in between, and the difference never changes the push's",
+              "expected value."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "stardust_mult_bps",
+            "docs": [
+              "Stage dust multiplier frozen at request (queue-aware stage)."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "client_seed",
+            "docs": [
+              "This member's contribution to its round's entropy, and the second half",
+              "of this account's own address. Appended rather than filed next to",
+              "`round_id` so the hand-decoded offsets above did not move.",
+              "",
+              "Kept on chain rather than only in the request event so that a round's",
+              "seed is verifiable from account state alone: fold every member's",
+              "`client_seed` in `push_id` order, mix in the slot hash `round.seed_slot`",
+              "names, and the result has to equal `round.seed`."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Player",
+      "docs": [
+        "Lifetime stats per wallet. STARDUST is internal points only - there is",
+        "deliberately no SPL token in this MVP."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "stardust",
+            "type": "u64"
+          },
+          {
+            "name": "requested_pushes",
+            "type": "u64"
+          },
+          {
+            "name": "successful_pushes",
+            "type": "u64"
+          },
+          {
+            "name": "cancelled_pushes",
+            "type": "u64"
+          },
+          {
+            "name": "total_sol_pushed",
+            "type": "u64"
+          },
+          {
+            "name": "stars_killed",
+            "type": "u64"
+          },
+          {
+            "name": "prizes_won",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PrizeClaimed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "star_id",
+            "type": "u64"
+          },
+          {
+            "name": "winner",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "claimed_ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProtocolFeesWithdrawn",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "treasury",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "remaining_accrued",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProtocolFunded",
+      "docs": [
+        "Lamports were donated into `protocol_accrued`, which is the float",
+        "`request_round_vrf` reimburses cranks from."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "payer",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "protocol_accrued",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PushCancelled",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "star_id",
+            "type": "u64"
+          },
+          {
+            "name": "push_id",
+            "type": "u64"
+          },
+          {
+            "name": "round_id",
+            "type": "u64"
+          },
+          {
+            "name": "push",
+            "type": "pubkey"
+          },
+          {
+            "name": "player",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "docs": [
+              "Refunded in full, in the same transaction."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "round_voided",
+            "docs": [
+              "True when the refund is because this push's round was voided rather than",
+              "because the star had already finished. The star is still alive in that",
+              "case and the player can push again immediately."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "resolved_ts",
+            "type": "i64"
+          },
+          {
+            "name": "resolved_slot",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PushRequested",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "star_id",
+            "type": "u64"
+          },
+          {
+            "name": "push_id",
+            "type": "u64"
+          },
+          {
+            "name": "round_id",
+            "docs": [
+              "The draw this push will share. Its seed does not exist yet."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "push",
+            "type": "pubkey"
+          },
+          {
+            "name": "round",
+            "type": "pubkey"
+          },
+          {
+            "name": "player",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "client_seed",
+            "docs": [
+              "This member's entropy contribution, published so the round's seed can be",
+              "replayed from events alone."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "round_members",
+            "docs": [
+              "How many pushes were sharing the round at this point, including this",
+              "one. The oracle cost is divided by its final value."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "requested_ts",
+            "type": "i64"
+          },
+          {
+            "name": "requested_slot",
+            "type": "u64"
+          },
+          {
+            "name": "chance_ppb",
+            "docs": [
+              "Nova chance quoted against committed mass at request time, for display",
+              "while the push is in flight. `PushResolved.threshold_ppb` is the one",
+              "that was actually rolled against."
+            ],
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PushResolved",
+      "docs": [
+        "A push settled against a live star.",
+        "",
+        "Field order up to `threshold_ppb` is pinned by the Android log parser; see",
+        "the layout test in this module."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "star_id",
+            "type": "u64"
+          },
+          {
+            "name": "push_id",
+            "type": "u64"
+          },
+          {
+            "name": "round_id",
+            "type": "u64"
+          },
+          {
+            "name": "push",
+            "type": "pubkey"
+          },
+          {
+            "name": "player",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "stake_refund",
+            "docs": [
+              "Stake handed back in this same transaction because the room left at",
+              "settle was below what the queue quoted at request time. `amount` is",
+              "already net of it."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "survived",
+            "docs": [
+              "false means this push destroyed the star."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "roll_ppb",
+            "type": "u32"
+          },
+          {
+            "name": "threshold_ppb",
+            "docs": [
+              "`amount / star_mass` in ppb: the push's share of the mass it created."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "star_mass",
+            "docs": [
+              "Star mass after this push landed."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "star_prize_pool",
+            "type": "u64"
+          },
+          {
+            "name": "stardust_awarded",
+            "type": "u64"
+          },
+          {
+            "name": "resolved_ts",
+            "type": "i64"
+          },
+          {
+            "name": "resolved_slot",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PushStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Pending"
+          },
+          {
+            "name": "Survived"
+          },
+          {
+            "name": "Killed"
+          },
+          {
+            "name": "Cancelled"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Round",
+      "docs": [
+        "One VRF draw, shared by every push queued while it was open.",
+        "",
+        "This is what makes the oracle affordable: ORAO charges per request, not per",
+        "player, so a round of `n` pushes costs `1/n` of a request each. It is also",
+        "what makes the randomness cheap to *verify* - there is one draw and one",
+        "published seed per batch, and each member's roll is a labelled hash of it.",
+        "",
+        "## Why the seed is safe",
+        "",
+        "The seed must not be computable by anyone until the round is sealed,",
+        "otherwise somebody buys the draw early, reads it, and only pushes when the",
+        "roll would be lethal. Two ingredients, each covering the other's gap:",
+        "",
+        "* **`entropy`**, folded from every member's `client_seed` as they join. A",
+        "player can steer their own contribution, so this alone is not enough.",
+        "* **a slot hash sampled at close**, which nobody can predict - not the",
+        "members, and not whoever submits the close, since the draw that seed",
+        "produces does not exist yet and cannot be shopped for.",
+        "",
+        "Members are therefore committed before the seed is decidable, and the seed",
+        "is fixed before the draw is bought. Nothing to grind at either end."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "star_id",
+            "type": "u64"
+          },
+          {
+            "name": "round_id",
+            "type": "u64"
+          },
+          {
+            "name": "entropy",
+            "docs": [
+              "Running hash of every member's `client_seed`. Half of the seed input."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "seed",
+            "docs": [
+              "The ORAO seed, fixed at close. Zero while the round is open, which is",
+              "the honest representation: it is genuinely not decided yet."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "randomness",
+            "docs": [
+              "ORAO randomness account for `seed`. Default while open."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "seed_slot",
+            "docs": [
+              "Slot whose hash went into `seed`, so the derivation can be replayed",
+              "off-chain from public data alone."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "member_count",
+            "docs": [
+              "How many pushes share this draw. The divisor on the oracle cost."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "stake",
+            "docs": [
+              "Total escrowed stake of those members. Not accounting - this is what",
+              "decides whether the round has earned its draw yet. See",
+              "[`Round::covers_draw`]."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "first_push_id",
+            "docs": [
+              "`push_id` of the first member, so a client can enumerate the batch."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "RoundStatus"
+              }
+            }
+          },
+          {
+            "name": "opened_slot",
+            "docs": [
+              "Slot the first member arrived, i.e. when the window started."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "closed_slot",
+            "type": "u64"
+          },
+          {
+            "name": "requested_slot",
+            "type": "u64"
+          },
+          {
+            "name": "opened_ts",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RoundClosed",
+      "docs": [
+        "A round was sealed and its ORAO seed fixed. Emitted by `close_round`.",
+        "",
+        "Everything needed to verify the seed independently is here: the sampled slot",
+        "is named, and the members' contributions are in their `PushRequested`",
+        "events. No draw exists at this point."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "star_id",
+            "type": "u64"
+          },
+          {
+            "name": "round_id",
+            "type": "u64"
+          },
+          {
+            "name": "round",
+            "type": "pubkey"
+          },
+          {
+            "name": "seed",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "seed_slot",
+            "docs": [
+              "The slot whose hash went into `seed`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "randomness",
+            "docs": [
+              "ORAO randomness account to watch for fulfillment."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "member_count",
+            "type": "u64"
+          },
+          {
+            "name": "first_push_id",
+            "type": "u64"
+          },
+          {
+            "name": "stake",
+            "docs": [
+              "Total stake behind the draw, and the rake it will yield. Published so the",
+              "economic gate is auditable after the fact: `rake >= draw_cost` held here,",
+              "or the star was full and took its last draw on the house."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "rake",
+            "type": "u64"
+          },
+          {
+            "name": "draw_cost",
+            "type": "u64"
+          },
+          {
+            "name": "forced",
+            "docs": [
+              "True when the round was sealed under the full-star exemption, i.e. it",
+              "could not grow any further so waiting for a bigger batch was impossible."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "closed_slot",
+            "type": "u64"
+          },
+          {
+            "name": "closed_ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RoundExpired",
+      "docs": [
+        "A round stalled and was voided. Emitted by `expire_round`. Every member is",
+        "now refundable through `resolve_push`, in any order."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "star_id",
+            "type": "u64"
+          },
+          {
+            "name": "round_id",
+            "type": "u64"
+          },
+          {
+            "name": "round",
+            "type": "pubkey"
+          },
+          {
+            "name": "member_count",
+            "type": "u64"
+          },
+          {
+            "name": "first_push_id",
+            "type": "u64"
+          },
+          {
+            "name": "never_sealed",
+            "docs": [
+              "True when the round never even got sealed, i.e. nobody cranked it."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "expired_slot",
+            "type": "u64"
+          },
+          {
+            "name": "expired_ts",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RoundRequested",
+      "docs": [
+        "The one draw for a whole round was bought. Emitted by `request_round_vrf`,",
+        "the only place the protocol pays ORAO."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "star_id",
+            "type": "u64"
+          },
+          {
+            "name": "round_id",
+            "type": "u64"
+          },
+          {
+            "name": "round",
+            "type": "pubkey"
+          },
+          {
+            "name": "payer",
+            "docs": [
+              "Whoever fronted ORAO and was reimbursed."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "randomness",
+            "type": "pubkey"
+          },
+          {
+            "name": "cost",
+            "docs": [
+              "What the request cost after the rent ORAO returns on fulfill. Measured",
+              "across the CPI, not assumed."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "reimbursed",
+            "docs": [
+              "What the rake could actually cover. Below `cost` only when the protocol",
+              "balance is short, in which case `payer` absorbed the difference."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "member_count",
+            "type": "u64"
+          },
+          {
+            "name": "cost_per_member",
+            "docs": [
+              "`cost / member_count`: what randomness worked out at per push."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "requested_slot",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RoundStatus",
+      "docs": [
+        "Where a [`Round`] is in its life. The order matters: a round only ever",
+        "moves forwards, and only `Requested` permits a push to settle."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Open"
+          },
+          {
+            "name": "Closed"
+          },
+          {
+            "name": "Requested"
+          },
+          {
+            "name": "Expired"
+          }
+        ]
+      }
+    },
+    {
+      "name": "StageChanged",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "star_id",
+            "type": "u64"
+          },
+          {
+            "name": "from_stage",
+            "type": "u8"
+          },
+          {
+            "name": "to_stage",
+            "type": "u8"
+          },
+          {
+            "name": "star_mass",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "StageConfig",
+      "docs": [
+        "One lifecycle stage: the mass at which it begins and how much STARDUST it",
+        "mints.",
+        "",
+        "Deliberately carries no odds. Stages are cosmetic and economic flavour now;",
+        "lethality is [`nova_ppb`], which is structural."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "min_mass",
+            "docs": [
+              "Inclusive lower bound, in lamports of star mass, for this stage."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "stardust_mult_bps",
+            "docs": [
+              "STARDUST multiplier in bps (10000 = 1×). Early stages mint more."
+            ],
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Star",
+      "docs": [
+        "Permanent record for one star. Never mutated once dead, apart from the",
+        "one-shot `prize_claimed` and `next_star_created` latches."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "star_id",
+            "type": "u64"
+          },
+          {
+            "name": "seed",
+            "docs": [
+              "Deterministic procedural visual seed. Drives the whole Three.js look."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "StarStatus"
+              }
+            }
+          },
+          {
+            "name": "stage",
+            "docs": [
+              "Index into `self.lifecycle.stages`."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "birth_ts",
+            "type": "i64"
+          },
+          {
+            "name": "birth_slot",
+            "type": "u64"
+          },
+          {
+            "name": "death_ts",
+            "type": "i64"
+          },
+          {
+            "name": "death_slot",
+            "type": "u64"
+          },
+          {
+            "name": "successful_pushes",
+            "docs": [
+              "Pushes that settled against this star while it was alive and landed",
+              "mass. Not the settle cursor - an expired round advances the cursor",
+              "without landing anything. See [`Star::settle_cursor`]."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "pending_pushes",
+            "docs": [
+              "Requested but not yet resolved."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "pending_lamports",
+            "docs": [
+              "Escrowed lamports of those pending pushes. Reserves room against the",
+              "hole cap so the queue cannot commit past it."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "cancelled_pushes",
+            "docs": [
+              "Arrived after death and were refunded."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "push_counter",
+            "docs": [
+              "Monotonic per-star push numbering. Assigned at request; settle order",
+              "follows it while the star is alive."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "total_mass",
+            "docs": [
+              "Total lamports that successfully landed. Drives the lifecycle stage."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "prize_pool",
+            "docs": [
+              "Prize share accumulated so far (`prize_bps` of settled mass), plus any",
+              "endowment in full. This is what a kill pays out, and the odds are the",
+              "push's share of `total_mass`, so a star with no endowment returns",
+              "exactly `prize_bps` and an endowed one returns better."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "lifecycle",
+            "docs": [
+              "Stage table, copied from the compiled lifecycle at birth, so an upgrade",
+              "cannot move a running star's STARDUST taper. The odds are not in here:",
+              "they are `amount / mass_after`, which no table can change."
+            ],
+            "type": {
+              "defined": {
+                "name": "LifecycleConfig"
+              }
+            }
+          },
+          {
+            "name": "killer",
+            "type": "pubkey"
+          },
+          {
+            "name": "killer_push",
+            "type": "pubkey"
+          },
+          {
+            "name": "killer_push_id",
+            "type": "u64"
+          },
+          {
+            "name": "final_prize",
+            "type": "u64"
+          },
+          {
+            "name": "prize_claimed",
+            "type": "bool"
+          },
+          {
+            "name": "next_star_created",
+            "type": "bool"
+          },
+          {
+            "name": "death_randomness",
+            "docs": [
+              "Full 64-byte VRF output of the lethal push, kept so anyone can verify",
+              "the death independently."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "death_roll_ppb",
+            "docs": [
+              "The roll that was taken, and what it had to beat."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "death_threshold_ppb",
+            "type": "u32"
+          },
+          {
+            "name": "current_round",
+            "docs": [
+              "The round `request_push` currently stamps onto new pushes. Bumped by",
+              "`close_round`, and by `expire_round` when it voids a round that never",
+              "got that far, so a fresh push always lands somewhere still open."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "settle_cursor",
+            "docs": [
+              "The next `push_id` allowed to resolve while the star is alive.",
+              "",
+              "Every push is processed exactly once and ids are dense from zero, so",
+              "this is just \"how many have been dealt with\" - which makes it an exact",
+              "ordering guard. It counts refunds from an expired round as well as",
+              "settles, because otherwise a voided batch would wedge every push behind",
+              "it forever."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "StarCollapsed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "star_id",
+            "type": "u64"
+          },
+          {
+            "name": "star",
+            "type": "pubkey"
+          },
+          {
+            "name": "final_mass",
+            "type": "u64"
+          },
+          {
+            "name": "final_prize",
+            "type": "u64"
+          },
+          {
+            "name": "echo",
+            "docs": [
+              "SOL recycled into `next_star_reserve` when `early_volume == 0`. Zero if feeders exist."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "early_volume",
+            "type": "u64"
+          },
+          {
+            "name": "successful_pushes",
+            "type": "u64"
+          },
+          {
+            "name": "stranded",
+            "docs": [
+              "True when the star collapsed short of the hole cap because it had run out",
+              "of ways to ever be pushed again, rather than by surviving to 21 SOL. Only",
+              "reachable after a voided round; see `resolve_push::stranded`."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "death_ts",
+            "type": "i64"
+          },
+          {
+            "name": "death_slot",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "StarCreated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "star_id",
+            "type": "u64"
+          },
+          {
+            "name": "star",
+            "type": "pubkey"
+          },
+          {
+            "name": "seed",
+            "docs": [
+              "Procedural visual seed."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "derived_from_star_id",
+            "docs": [
+              "Star id this seed was derived from; 0 for the genesis star."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "birth_ts",
+            "type": "i64"
+          },
+          {
+            "name": "birth_slot",
+            "type": "u64"
+          },
+          {
+            "name": "endowment",
+            "docs": [
+              "Inherited jackpot/mass from the previous star's next-star reserve."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "StarDestroyed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "star_id",
+            "type": "u64"
+          },
+          {
+            "name": "star",
+            "type": "pubkey"
+          },
+          {
+            "name": "killer",
+            "docs": [
+              "The Star Killer."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "killer_push",
+            "type": "pubkey"
+          },
+          {
+            "name": "killer_push_id",
+            "type": "u64"
+          },
+          {
+            "name": "killer_round_id",
+            "docs": [
+              "The round whose draw killed the star. `randomness` below is that draw,",
+              "and the roll is `sha256(\"soldust:roll\" || randomness || killer_push_id)`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "final_mass",
+            "type": "u64"
+          },
+          {
+            "name": "final_prize",
+            "type": "u64"
+          },
+          {
+            "name": "successful_pushes",
+            "type": "u64"
+          },
+          {
+            "name": "roll_ppb",
+            "type": "u32"
+          },
+          {
+            "name": "threshold_ppb",
+            "type": "u32"
+          },
+          {
+            "name": "randomness",
+            "docs": [
+              "Full VRF output, for independent verification."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "death_ts",
+            "type": "i64"
+          },
+          {
+            "name": "death_slot",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "StarFeed",
+      "docs": [
+        "Early-feed tally for one star. Created on the first push."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "star_id",
+            "type": "u64"
+          },
+          {
+            "name": "early_volume",
+            "docs": [
+              "Settled lamports pushed while mass was still below 1 SOL."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "StarStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Alive"
+          },
+          {
+            "name": "Dead"
+          },
+          {
+            "name": "BlackHole"
+          }
+        ]
+      }
+    }
+  ]
+}

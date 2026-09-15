@@ -1,0 +1,47 @@
+{
+  "name": "soldust-onchain",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SOLDUST devnet MVP - Anchor program + dev client scripts",
+  "type": "commonjs",
+  "scripts": {
+    "initialize": "tsx scripts/initialize.ts",
+    "fund-protocol": "tsx scripts/fund-protocol.ts",
+    "show-config": "tsx scripts/show-config.ts",
+    "show-current-star": "tsx scripts/show-current-star.ts",
+    "show-pending": "tsx scripts/show-pending.ts",
+    "show-player": "tsx scripts/show-player.ts",
+    "push": "tsx scripts/push.ts",
+    "resolve": "tsx scripts/resolve.ts",
+    "crank": "tsx scripts/crank.ts",
+    "index-once": "tsx scripts/index-once.ts",
+    "create-next-star": "tsx scripts/create-next-star.ts",
+    "claim-prize": "tsx scripts/claim-prize.ts",
+    "claim-hole": "tsx scripts/claim-hole.ts",
+    "withdraw-fees": "tsx scripts/withdraw-fees.ts",
+    "selftest": "tsx scripts/selftest.ts",
+    "rpc-budget": "tsx scripts/rpc-budget-check.mjs",
+    "measure-orao": "tsx scripts/measure-orao.ts",
+    "measure-orao-tx": "tsx scripts/measure-orao-tx.ts",
+    "watch": "tsx scripts/watch.ts",
+    "rpc-proxy": "tsx scripts/rpc-proxy.ts",
+    "verify-build": "bash scripts/verify-build.sh",
+    "mirror-public": "bash scripts/mirror-public.sh",
+    "sync-idl": "node scripts/sync-idl.mjs"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
+    "@noble/hashes": "^1.4.0",
+    "@solana/web3.js": "^1.98.0",
+    "bs58": "^6.0.0",
+    "dotenv": "^16.4.5",
+    "tweetnacl": "^1.0.3",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

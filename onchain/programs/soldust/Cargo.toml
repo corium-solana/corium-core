@@ -1,0 +1,28 @@
+[package]
+name = "soldust"
+version = "0.1.0"
+description = "SOLDUST - on-chain star lifecycle (devnet MVP)"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "soldust"
+
+[features]
+default = []
+# Localnet only: shrinks the stall timeouts in `constants.rs` from days to
+# seconds so `c3-stalled-star.ts` can actually reach a collapse. Never enable
+# this for a build that is going to be deployed - `state.rs` asserts the shipped
+# values when it is off, so the test suite and this feature are exclusive.
+short-stalls = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build"]
+
+[dependencies]
+anchor-lang = { version = "1.2.0", features = ["init-if-needed"] }
+# Anchor 1.x no longer re-exports `solana_program::hash`.
+solana-sha256-hasher = "3.1"
+solana-security-txt = "1.1.3"
