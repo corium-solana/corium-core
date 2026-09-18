@@ -1,12 +1,12 @@
 /**
- * H-3 (fixed) - a push landing mid-flight no longer reverts the draw.
+ * H-3 (fixed) - a push landing mid-flight no longer moves the round's seed.
  *
  * The bug: `round.entropy` was a running hash, folded again on every arrival. The
- * ORAO account address is a function of the seed, the seed is a function of that
- * field, and Solana needs every address named before a transaction executes - so
- * the crank had to read the round, derive the address, and hope the field had not
- * moved by the time its draw landed. Any `request_push` confirmed in that gap
- * changed the seed, so the draw failed the address check and reverted.
+ * seed is a function of that field, the ORAO randomness account's address was a
+ * function of the seed, and Solana needs every address named before a transaction
+ * executes - so the crank had to read the round, derive the address, and hope the
+ * field had not moved by the time its draw landed. Any `request_push` confirmed in
+ * that gap changed the seed, so the draw failed the address check and reverted.
  *
  * No attacker was required, only traffic, and it got worse the busier the star
  * was: an Open round keeps taking members until somebody draws it, so a hot round
@@ -17,9 +17,18 @@
  *
  * The fix writes `round.entropy` once, from the `client_seed` of the member who
  * opened the round, and never touches it again. Every other seed input was already
- * either fixed at open or the caller's own choice, so an address the crank derives
- * now holds still. This scenario derives one *before* a second member joins, and
- * shows the draw landing on it afterwards.
+ * either fixed at open or the caller's own choice, so a seed the crank derives now
+ * holds still.
+ *
+ * Moving to MagicBlock retired the address that turned a moved seed into a revert:
+ * a request is filed against a queue, not created at an address, and `draw_round`
+ * derives the seed on chain rather than being handed one. So the frozen field is
+ * no longer what keeps a busy round drawable - it is what keeps the seed
+ * *predictable*. The crank derives it off chain to tie a queued request back to
+ * the round that made it, and clients replay the same derivation from public data;
+ * a field that moved under them would break that tie silently rather than loudly.
+ * This scenario derives the seed *before* a second member joins, and shows the
+ * round committing exactly that seed afterwards.
  */
 
 import { Keypair } from '@solana/web3.js';
@@ -35,7 +44,6 @@ import {
   head,
   newPlayer,
   novaPpb,
-  oraoFulfill,
   pushStatus,
   recentSlotHash,
   requestPush,
@@ -45,6 +53,7 @@ import {
   showRound,
   sol,
   statusName,
+  vrfFulfill,
   waitOutWindow,
   FEED_MASS,
 } from '../lib';
@@ -71,13 +80,14 @@ async function main() {
   const bob = await newPlayer(w);
   await waitOutWindow(w, 1, roundId);
 
-  act('the crank reads the round and derives the address it is about to request');
+  act('the crank reads the round and derives the seed it is about to commit');
   // Exactly what `shared/chain/actions.js` does: seed from the round's entropy,
-  // a slot hash of its own choosing, and its own key.
+  // a slot hash of its own choosing, and its own key. The program will run the
+  // same derivation over the same inputs inside `draw_round`, so this is a
+  // prediction that has to survive whatever lands in between.
   const picked = await recentSlotHash(w);
   const predicted = roundSeed(1, roundId, committed, picked.slot, picked.hash, w.payer.publicKey);
-  const predictedAddress = w.oraoRequest(predicted);
-  say(`it will ask ORAO for ${predictedAddress.toBase58()}`);
+  say(`it expects to commit seed ${predicted.toString('hex').slice(0, 16)}…`);
 
   act('bob joins in that gap - which used to be the whole of the problem');
   const pBob = await requestPush(w, 1, STAKE, bob);
@@ -90,19 +100,18 @@ async function main() {
   );
 
   act('so the draw the crank already built still lands');
-  const drew = await drawRound(w, 1, roundId, treasury, {
+  const drew = await drawRound(w, 1, roundId, {
     seedSlot: picked.slot,
     slotHash: picked.hash,
   });
-  assert(
-    drew.request.equals(predictedAddress),
-    'the draw went to the address derived before bob existed'
-  );
   const sealed = await showRound(w, 1, roundId);
-  assert(statusName(sealed.status) === 'requested', 'the round is sealed and its draw bought');
+  assert(
+    statusName(sealed.status) === 'requested',
+    'the round is sealed and paid for, waiting on the callback'
+  );
   assert(
     Buffer.from(sealed.seed).equals(predicted),
-    'and committed exactly the seed that address came from'
+    'and committed exactly the seed derived before bob existed'
   );
 
   act('sealing is atomic, so the next push cannot reach the batch it sealed');
@@ -117,7 +126,9 @@ async function main() {
     { pushId: pAlice.pushId, thresholdPpb: novaPpb(STAKE, FEED_MASS + STAKE) },
     { pushId: pBob.pushId, thresholdPpb: novaPpb(STAKE, FEED_MASS + 2 * STAKE) },
   ]);
-  await oraoFulfill(w, drew.request, draw);
+  await vrfFulfill(w, 1, roundId, drew.seed, draw);
+  const drawn = await showRound(w, 1, roundId);
+  assert(statusName(drawn.status) === 'drawn', 'the callback landed and the round is Drawn');
   await resolvePush(w, pAlice);
   await resolvePush(w, pBob);
   assert((await pushStatus(w, pAlice)) === 'survived', 'alice settled against the draw');
@@ -125,8 +136,11 @@ async function main() {
 
   act('what the fix is worth');
   say(`bob staked ${sol(STAKE)} and cost the round nothing but a member slot`);
-  say('before it, his push reverted the crank\'s draw, and the next attempt raced');
-  say('  the next arrival - on a busy star, until the batch expired into refunds');
+  say('against the address-derived oracle his push reverted the crank\'s draw, and');
+  say('  the next attempt raced the next arrival - on a busy star, until the batch');
+  say('  expired into refunds');
+  say('a filed request cannot revert that way, so what the frozen field buys now is');
+  say('  a seed anyone can derive for themselves and find on chain unmoved');
   say('nothing about the seed got weaker: alice picked her half blind, and the');
   say('  slot hash it is mixed with did not exist when she signed');
 

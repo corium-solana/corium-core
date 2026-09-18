@@ -19,6 +19,6 @@ localnet/deployer.json
 # localnet harness artifacts: validator ledger, logs, and built binaries
 localnet/.ledger/
 localnet/.validator.log
-localnet/mock-orao-vrf/out/
-localnet/mock-orao-vrf/target/
+localnet/mock-magicblock-vrf/out/
+localnet/mock-magicblock-vrf/target/
 localnet/*.so

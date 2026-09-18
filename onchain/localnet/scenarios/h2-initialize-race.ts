@@ -32,9 +32,9 @@ import {
   initialize,
   mustFail,
   newPlayer,
-  oraoInit,
   say,
   sol,
+  vrfInit,
   FEED_MASS,
 } from '../lib';
 
@@ -48,7 +48,7 @@ async function main() {
   const operator = Keypair.generate();
   const operatorTreasury = operator.publicKey;
   const attackerTreasury = Keypair.generate().publicKey;
-  await oraoInit(w, Keypair.generate().publicKey);
+  await vrfInit(w);
 
   act('confirm the harness really is standing where mainnet will');
   const pd = await w.connection.getAccountInfo(w.programData);

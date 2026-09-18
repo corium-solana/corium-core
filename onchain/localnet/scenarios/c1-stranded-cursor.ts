@@ -39,7 +39,7 @@ import {
   waitUntilSlot,
 } from '../lib';
 
-const STAKE = LAMPORTS_PER_SOL / 25; // 0.04 SOL, two of them clear the draw bar
+const STAKE = LAMPORTS_PER_SOL / 25; // 0.04 SOL, and one alone clears the draw bar
 
 async function main() {
   head('C-1: an out-of-order refund stranding an earlier round forever');
@@ -55,8 +55,8 @@ async function main() {
   const pBob = await requestPush(w, 1, STAKE, bob);
   say(`alice push_id=${pAlice.pushId}, bob push_id=${pBob.pushId}, round #${pAlice.roundId}`);
   const roundA = pAlice.roundId;
-  await sealAndDraw(w, 1, roundA, treasury);
-  say('round A is Requested with a landed draw - it can never be expired again');
+  await sealAndDraw(w, 1, roundA);
+  say('round A is Drawn - a round whose draw has landed can never be expired again');
   say('the crank now dies before resolving anybody');
 
   act('round B: two more players queue up, and nobody buys their draw');

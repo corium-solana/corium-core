@@ -33,7 +33,7 @@ async function main() {
   await bootstrap(w, treasury);
 
   const need = await stakeNeededForDraw(w);
-  say(`a round must stake ${sol(need)} before its rake covers one ORAO draw`);
+  say(`a round must stake ${sol(need)} before its rake covers one MagicBlock draw`);
 
   act('one player pushes enough to pay for a draw');
   const alice = await newPlayer(w);
@@ -42,8 +42,8 @@ async function main() {
   say(`push_id=${p.pushId} round=${p.roundId} amount=${sol(p.amount)}`);
   await showStar(w, 1, 'after push');
 
-  act('seal the round, buy the draw, let ORAO answer');
-  await sealAndDraw(w, 1, p.roundId, treasury);
+  act('seal the round, buy the draw, let the oracle answer');
+  await sealAndDraw(w, 1, p.roundId);
   await showRound(w, 1, p.roundId);
 
   act('settle');

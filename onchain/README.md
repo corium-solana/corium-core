@@ -46,7 +46,7 @@ onchain/
     lib.rs              program entrypoint, instruction list
     game_config.rs      ** all game balance lives here **
     state.rs            Config / Star / Round / PendingPush / Player
-    vrf.rs              ORAO VRF adapter, slot-hash read, seed + roll derivation
+    vrf.rs              MagicBlock VRF adapter, slot-hash read, seed + roll derivation
     vault.rs            the only place lamports leave the program
     events.rs           everything the frontend needs
     errors.rs
@@ -56,7 +56,8 @@ onchain/
       create_star.rs    create_first_star, create_next_star
       feed.rs           nursery hole ticket - one tx, no VRF
       request_push.rs   step 1 - the player's single signature; joins a round
-      round.rs          step 2 - draw_round / expire_round / close_round_account
+      round.rs          step 2 - draw_round / consume_randomness / expire_round /
+                        close_round_account
       resolve_push.rs   step 3 - permissionless settle/refund, plus close_push
       claim_prize.rs
       claim_hole.rs      pays feeders on a black hole *or* a stall collapse
@@ -64,7 +65,7 @@ onchain/
       admin.rs          withdraw_protocol_fees (permissionless above the float
                         floor), fund_protocol (permissionless)
   scripts/              TypeScript dev client
-  localnet/             audit scenarios against a real validator + a mock ORAO
+  localnet/             audit scenarios against a real validator + a mock oracle
   target/idl/soldust.json     generated IDL
   target/types/soldust.ts     generated TS types
 ```
@@ -84,7 +85,7 @@ survived in that file long after the rename.
 | `Config` | `["config"]` | singleton | Current star id, the four vault liability buckets, and the frozen treasury. **No tunables, no authority, no pause flag** - every number that decides an outcome is compiled into `game_config.rs`. |
 | vault | `["vault"]` | singleton | A **system-owned account with zero data** holding every lamport the program controls. Lamports can only leave via a `system_program::transfer` signed by the vault PDA. |
 | `Star` | `["star", star_id_le]` | permanent | One per star, never overwritten. Carries the visual seed, mass, prize pool, stage, the round cursor, the settle cursor, and the full death record. |
-| `Round` | `["round", star_id_le, round_id_le]` | per round | A batch of pushes that share one VRF draw. Carries the entropy its opening member committed, the sealed seed, the randomness address, and the stage timestamps the expiry clock reads. |
+| `Round` | `["round", star_id_le, round_id_le]` | per round | A batch of pushes that share one VRF draw. Carries the entropy its opening member committed, the sealed seed, the 32-byte draw itself once the oracle calls back, and the stage timestamps the expiry clock reads. |
 | `PendingPush` | `["push", player, client_seed]` | per push | Binds a player, a stake, one star, and one round. |
 | `StarFeed` / `FeedShare` | `["feed", star_id_le]` / `["feed-share", star_id_le, wallet]` | per star / per wallet | Nursery volume and one wallet's hole ticket. Created and paid for by the player, never by a resolver. |
 | `Player` | `["player", wallet]` | per wallet | Lifetime STARDUST and counters. |
@@ -101,15 +102,21 @@ where `entropy` is written once, by the push that opened the round:
 `entropy = sha256("soldust:entropy" ‖ 0³² ‖ client_seed ‖ player ‖ push_id_le)`.
 
 Every input is therefore either fixed when the round opened or chosen by the
-caller of the draw. That is a liveness requirement, not an aesthetic one: the
-ORAO account address follows from the seed and has to be named before the
-transaction executes, so a field that moved as members arrived would have any
-push confirming mid-flight revert the draw - no attacker needed, just traffic.
-`localnet/scenarios/h3-draw-race.ts` holds that down.
+caller of the draw. That was once a liveness requirement: the ORAO account
+address followed from the seed and had to be named before the transaction
+executed, so a field that moved as members arrived had any push confirming
+mid-flight revert the draw - no attacker needed, just traffic. There is no
+derived address to miss any more, so what the frozen field buys now is that the
+seed is *predictable*: the crank derives it off-chain to tie a queued request
+back to the round that made it, and clients replay the same derivation from
+public data. A field that moved under them would break that tie silently rather
+than loudly. `localnet/scenarios/h3-draw-race.ts` holds that down.
 
 **A member's roll** is `sha256("soldust:roll" ‖ randomness ‖ push_id_le)[..16]`
 read as a little-endian `u128`, mod `1e9`. One draw, one independent roll per
-member, and `push_id` is fixed before the seed exists.
+member, and `push_id` is fixed before the seed exists. `randomness` here is 64
+bytes: the oracle delivers 32, and `vrf::widen` right-pads them so the roll is
+computed over exactly the shape it always was.
 
 All three derivations have known-answer vectors asserted on both sides -
 `vrf::tests::round_seed_matches_the_typescript_client` in Rust, and the same
@@ -149,11 +156,16 @@ so a star that can only do those is stalled. See `collapse_stalled_star` under
                                   |   draw_round (anyone, after the window or at
                                   |   target size). Seals the round, derives the
                                   |   seed from a caller-named slot hash, and
-                                  |   buys one ORAO draw for the whole round out
-                                  |   of protocol_accrued - one transaction, so
-                                  |   the seed and its ORAO account are never
-                                  |   apart. ORAO fulfills off-chain.
+                                  |   files one VRF request for the whole round
+                                  |   out of protocol_accrued - one transaction,
+                                  |   so the seed is never public while unspent.
                                   v                        Round{Requested}
+                                  |
+                                  |   consume_randomness. An oracle answers and
+                                  |   the VRF program calls back into us with the
+                                  |   32-byte draw, which lands on the round.
+                                  |   Nobody else can produce that signature.
+                                  v                        Round{Drawn}
   anyone      ->   resolve_push  (permissionless, settle_cursor order)
                                   |
         star alive & drawn -------+------- star dead, or Round{Expired}
@@ -177,9 +189,13 @@ so a star that can only do those is stalled. See `collapse_stalled_star` under
 
 There is deliberately **no state between `Open` and `Requested`.** A round that is
 sealed but not yet drawn was a real status once, and it was a vulnerability: its
-seed was public while the ORAO account that seed points at was still unoccupied,
-and ORAO's request instruction is permissionless. `RoundStatus` no longer has a
-variant to represent that moment, because the moment no longer exists.
+seed was public while the ORAO account that seed pointed at was still unoccupied,
+and ORAO's request instruction was permissionless. `RoundStatus` no longer has a
+variant to represent that moment, because the moment no longer exists. The
+mechanism behind the finding is gone too - MagicBlock files a request against a
+queue instead of creating an account at an address the seed decides, so there is
+nothing to occupy. The atomicity is kept anyway, because it costs nothing and it
+preserves the cleaner property: a seed is never public while still unspent.
 
 **Only the first transaction is signed by the player.** Resolution is
 permissionless: a backend crank normally submits it, but the crank has zero
@@ -206,36 +222,53 @@ the network fee and nothing else, whether the star died first or the round was
 voided. The 3.14% rake is unaffected either way.
 
 A **dead-star resolve does not require randomness at all**, and neither does a
-voided round. Between them those two paths mean escrow is never stuck: if ORAO
-stops answering, `expire_round` releases the batch after the timeout, and if the
-star dies first the refund path takes over immediately.
+voided round. Between them those two paths mean escrow is never stuck: if the
+oracle stops answering, `expire_round` releases the batch after the timeout, and
+if the star dies first the refund path takes over immediately.
 
 ---
 
 ## Randomness
 
-[ORAO VRF](https://orao.network) (`VRFzZoJdhFWL8rkvu87LpKM3RbcVezpMEc6X5GVDr7y`,
-same address on devnet and mainnet). No timestamp or blockhash decides anything.
-A recent slot hash is read, but only as a seed **nonce** - never as randomness.
+[MagicBlock `ephemeral-vrf`](https://github.com/magicblock-labs/ephemeral-vrf)
+(`Vrf1RNUjXmQGjmQrQLvJHs9SNkvDJEsRVFPkfSQUwGz`, same address on devnet and
+mainnet), against the oracle queue
+`Cuj97ggrhhidhbu39TijNVqE74xvKJ69gDervRUXAxGh`, which the program pins. No
+timestamp or blockhash decides anything. A recent slot hash is read, but only as
+a seed **nonce** - never as randomness.
+
+The integration is **push, not pull**. `draw_round` files a request against the
+queue; an oracle answers it off-chain and the VRF program calls back into
+`consume_randomness`, which writes the draw onto the round. There is no
+per-request account, no address derived from the seed, and nothing of the
+oracle's for this program to parse.
 
 ### One draw per round, not per push
 
-A fresh VRF draw costs about 0.0022 SOL unrecoverably. Charged per push that is
-over a fifth of a minimum 0.01 SOL push, which would make small play absurd. So
-randomness is bought per **round**: every push that arrives inside the same short
-window shares one draw, and each member derives an independent roll from it.
+A draw costs a flat 0.0005 SOL, and that is the whole of it - there is no
+per-request account, so no rent is locked up and none comes back. Charged per
+push that is still 5% of a minimum 0.01 SOL push, which would make small play
+expensive for no reason. So randomness is bought per **round**: every push that
+arrives inside the same short window shares one draw, and each member derives an
+independent roll from it.
 
 | Members sharing one draw | Cost per push |
 |---|---|
-| 1 | ~0.00218 SOL |
-| 4 | ~0.00054 SOL |
-| 10 | ~0.00022 SOL |
-| 24 | ~0.00009 SOL |
+| 1 | 0.0005 SOL |
+| 4 | 0.000125 SOL |
+| 10 | 0.00005 SOL |
+| 24 | ~0.0000208 SOL |
 
-At 314 bps a round has paid for its own draw once it holds about 0.07 SOL of
-stake - roughly seven minimum pushes, or one member of any real size. Below that
-the house subsidises the batch, which is the right direction for the error to
-run. `vrf::tests::a_round_amortises_the_draw_across_its_members` pins these.
+At 314 bps a round has paid for its own draw once it holds about 0.016 SOL of
+stake - two minimum pushes, or one member of any real size. Below that the house
+subsidises the batch, which is the right direction for the error to run.
+`vrf::tests::a_round_amortises_the_draw_across_its_members` pins these.
+
+Under ORAO the same bar sat at about 0.07 SOL, or seven minimum pushes, because
+ORAO entombed ~0.00168 SOL of unrecoverable rent in every draw on top of its fee.
+That is the practical difference the migration bought: a round of two minimum
+pushes is now worth drawing, so quiet stars stop waiting for company that was
+only ever needed to pay for rent.
 
 ### Why the seed cannot be gamed
 
@@ -244,8 +277,9 @@ because they fail in different ways:
 
 1. **A round's seed must not be computable by anyone until the round is closed to
    new entrants** - otherwise a member could decide whether to join.
-2. **A round's seed must never exist on chain without its ORAO account** -
-   otherwise anyone can occupy the address that seed points at.
+2. **A draw must only ever reach the round that asked for it, and only from the
+   VRF program** - otherwise randomness this program did not buy could be read as
+   a round's outcome.
 
 For (1), three ingredients cover each other's weakness:
 
@@ -258,37 +292,72 @@ For (1), three ingredients cover each other's weakness:
   public state alone. A crank that signs each draw with a fresh keypair produces
   a seed nobody else can compute even in principle.
 
-For (2), sealing and drawing are **one transaction**, `draw_round`. They used to
-be two, and that was the bug: `close_round` published `round.seed` while the ORAO
-account derived from it was still empty, and ORAO's `request_v2` is
-permissionless, so anyone reading the sealed round could occupy that exact address
-first. `request_round_vrf` correctly refused to adopt an account it had not
-created - which meant the round could then only ever expire. It cost the attacker
-one ORAO fee to deny a round, repeatably, and the fix is not a check but the
-removal of the gap: `RoundStatus` no longer has a sealed-but-undrawn variant, so
-there is no state in which a published seed is waiting for its account.
+For (2), two facts are fixed in different places and both have to hold.
 
-What is left of that attack is a same-slot race against a transaction that has not
-been broadcast yet. If an attacker wins it, `draw_round` reverts on the emptiness
-check and **nothing is committed**: the round is still `Open`, still has a zero
-seed, and the next attempt names a newer slot hash and therefore derives an
-entirely different address. They must win the race again, and again, forever, and
-against a key-rotating crank they cannot even aim.
+The **caller is the VRF program**. `consume_randomness` pins its one signer to
+`vrf::callback_identity()`, which is `PDA(["identity", soldust], vrf)` - a PDA
+derived under the VRF program's own id and scoped to this program. Only that
+program can produce a signature for it, via `invoke_signed`, and it only does so
+after verifying an oracle's proof against a request in its queue. The key cannot
+appear as a transaction signer at all, so there is no way to present it from
+outside. Anything else is `InvalidVrfCallbackIdentity`.
+
+The **round is the one that asked**. `draw_round` names the round in the
+request's callback account list, and nothing later can change that entry, so the
+oracle can only hand a result back to the round that bought it. The request
+itself is signed by `PDA(["identity"], soldust)`, and MagicBlock refuses a
+request whose identity does not derive from the callback program it names - so
+an outsider cannot file a request that calls back into soldust in the first
+place.
+
+Two more checks make the write total. `consume_randomness` requires status
+`Requested` (`RoundNotRequested`), so a draw is written once: a replayed callback
+finds the wrong status, and a round that already expired into refunds cannot be
+revived into a settlement. And an all-zero draw is refused (`ZeroRandomness`),
+because all-zero is the byte pattern an undrawn round already carries and storing
+it would make "drawn" and "no draw yet" indistinguishable to every reader
+off-chain.
+
+Property (2) used to read *"a round's seed must never exist on chain without its
+ORAO account"*, and that was a real finding rather than a hypothetical. Sealing
+and drawing were two transactions: `close_round` published `round.seed` while the
+ORAO account derived from it was still empty, and ORAO's `request_v2` was
+permissionless, so anyone reading the sealed round could occupy that exact
+address first. `request_round_vrf` correctly refused to adopt an account it had
+not created - which meant the round could then only ever expire. It cost the
+attacker one ORAO fee to deny a round, repeatably. The fix was not a check but
+the removal of the gap: sealing and drawing merged into `draw_round`, so
+`RoundStatus` has no sealed-but-undrawn variant.
+
+Under MagicBlock the underlying hazard is gone rather than merely closed. There
+is no address derived from the seed, so there is nothing to squat, and filing a
+request at all needs a signature only this program can produce. Sealing and
+drawing are still **one transaction** because that costs nothing and keeps the
+seed from ever being public while unspent.
+`localnet/scenarios/h1-frontrun-seed.ts` now pins the gate that supersedes the
+squat: a stranger trying, three ways, to file a request naming soldust as its
+callback.
 
 `draw_round` takes the `seed_slot` from its caller rather than sampling one
-itself, because Solana requires every account address up front and the ORAO
-address is a function of the seed - so the caller has to be able to compute the
-seed before it builds the transaction. `vrf::slot_hash_at` then verifies the
-named slot really is in `SlotHashes` and within `SLOT_HASH_LOOKBACK` (150 slots,
-matched to a blockhash's own lifetime so the check can never be the reason an
-otherwise-valid transaction fails). That discretion is harmless: a seed cannot be
-evaluated without the VRF output, so there is nothing to shop for, and an address
-that already holds an answer cannot be requested at all.
+itself. Under ORAO it had to, because Solana requires every account address up
+front and the randomness address was a function of the seed. That constraint is
+gone, and the parameter is kept because it is what makes the derivation
+replayable off-chain from public data alone, which the crank needs to tie a
+queued request back to its round and the clients need to replay a roll.
+`vrf::slot_hash_at` verifies the named slot really is in `SlotHashes` and within
+`SLOT_HASH_LOOKBACK` (150 slots, matched to a blockhash's own lifetime so the
+check can never be the reason an otherwise-valid transaction fails). That
+discretion is harmless: a seed cannot be evaluated without the VRF output, so
+there is nothing to shop for.
 
-`draw_round` CPIs into `request_v2(seed)`, which creates the randomness account
-with `init`. At resolve time the program re-checks the account's **owner**,
-**discriminator** and **recorded seed** before reading the 64-byte output, and the
-address itself is pinned to `round.randomness`.
+The oracle delivers 32 bytes where ORAO delivered 64. `Round.randomness` used to
+hold the ORAO account's *address* - a `Pubkey`, which is 32 raw Borsh bytes -
+and now holds the draw itself in the same 32 bytes, so the account layout did not
+move and live rounds needed no migration. `vrf::widen` right-pads the draw to 64
+before rolling, so `roll_for` and the published test vectors are bit-for-bit what
+they were. The oracle contributes 256 bits of entropy instead of 512; every
+property the game depends on comes from SHA-256 acting as a PRF over the
+`push_id` label rather than from how wide its input is.
 
 ### Nothing can freeze
 
@@ -303,14 +372,23 @@ Two properties keep that from being an exploit rather than an escape hatch:
 an unfavourable roll; and while a draw is pending nobody knows its value, so
 voiding is always blind.
 
+The first of those used to require parsing ORAO's account and deciding what an
+unreadable answer meant - a defensive branch that had to void the round, because
+refusing to would have closed the escape hatch exactly when the oracle was the
+broken thing. Under the push model it is a status comparison: a `Drawn` round
+reports no stall slot at all, so a landed draw is structurally unvoidable, and
+`expire_round` takes no oracle account. Neither does `resolve_push`, because the
+draw is already on the round.
+
 Every stake therefore has an oracle-independent exit, and
-`onchain/localnet/scenarios/c2-unreadable-vrf.ts` demonstrates it against four
-shapes of oracle damage plus a silent oracle.
+`onchain/localnet/scenarios/c2-unreadable-vrf.ts` demonstrates it against a
+forged callback, a replayed one, an all-zero draw, a callback arriving after the
+round already voided, and a silent oracle.
 
 **And the pot, one step behind it.** Refunds alone were not enough, because a
-refund lands no mass. If ORAO stopped answering permanently, rounds would keep
-expiring and keep refunding, but no push would ever roll again - so the star would
-never die, never reach the hole, and the `prize_pool` its earlier settles had
+refund lands no mass. If the oracle stopped answering permanently, rounds would
+keep expiring and keep refunding, but no push would ever roll again - so the star
+would never die, never reach the hole, and the `prize_pool` its earlier settles had
 already paid in would sit in the vault with no instruction able to release it. Not
 a loss of principal, but the feeders' hole tickets would be worthless paper and no
 successor could be born past the incumbent. The identical shape appears with
@@ -357,20 +435,28 @@ and every player gone: voiding a round needs only slots, resolving its members
 needs only that void, and collapsing the star needs only time. None of the three
 needs us, and none needs an upgrade authority.
 
-The SlotHashes sysvar is parsed by hand in `vrf::recent_slot_hash` - 8-byte LE
+The SlotHashes sysvar is parsed by hand in `vrf::slot_hash_at` - 8-byte LE
 count, then 40-byte `(slot, hash)` entries, newest first. Anchor's
 `Sysvar<'info, SlotHashes>` is deliberately avoided: the account is ~20KB and
 deserialising it would cost more compute than the rest of the instruction.
 
 ### Why the CPI is hand-rolled
 
-`orao-solana-vrf` 0.7 pins `anchor-lang ^0.32.1`, which cannot coexist with the
-Anchor 1.x this program targets. Rather than hold the whole program back a major
-version, `vrf.rs` builds the one instruction we need directly. The surface is
-tiny - a 40-byte instruction and a read-only account parse - and both the
-instruction discriminator and the account layout are verified by unit tests
-against constants derived from ORAO's published source (crate v0.7.0). The
-devnet network state account has been checked to match this layout.
+The `ephemeral-vrf-sdk` crate pulls in a `solana-program` / `steel` stack of its
+own, and this program deliberately depends on nothing but `anchor-lang` and a
+SHA-256 hasher so its build stays reproducible. The same reasoning kept the ORAO
+adapter hand-rolled before it, where the conflict was a pinned
+`anchor-lang ^0.32.1` against the Anchor 1.x this program targets.
+
+The surface is tiny - one instruction to build and one 32-byte argument to
+receive - and every constant in `vrf.rs` is asserted against its published
+derivation in that module's unit tests: the `RequestRandomnessScoped` tag, our
+own `consume_randomness` discriminator, the request fee, and both identity PDAs
+against the deployed program ids. The request is the *scoped* form rather than
+the legacy global one on purpose: a scoped request is answered by a callback
+signed by a PDA bound to this program id, where the deprecated global identity
+would let any program's callback be signed by the same key ours is checked
+against.
 
 ### Cost, on top of the stake
 
@@ -397,27 +483,34 @@ That is the whole bill. **The player pays nothing towards randomness.** The
 frontend's copy of these figures is `src/legal/fees.js`; if an account's layout
 changes, that scenario prints the new number and both documents follow it.
 
-**Nothing about ORAO's price is compiled in**, because it is live cluster state
-and it disagrees between clusters - run `yarn measure-orao` against either to see:
+**What the house pays** is one flat fee, the same on devnet and mainnet:
 
 | | devnet | mainnet |
 |---|---|---|
-| ORAO `request_fee` | 0.0003 | 0.0005 |
-| rent, 749-byte pending request | 0.00446 | 0.00555 |
-| rent, 137-byte fulfilled request | 0.00135 | 0.00168 |
-| returned to the payer on fulfill | 0.00311 | 0.00388 |
-| **unrecoverable cost of one draw** | **0.00165** | **0.00218** |
+| `VRF_REQUEST_FEE`, paid into the queue | 0.0005 | 0.0005 |
+| per-request rent | none | none |
+| **unrecoverable cost of one draw** | **0.0005** | **0.0005** |
 
-The rent rate is not a constant either: fulfilled accounts created earlier still
-hold 0.00184 SOL, the figure both clusters used before the rate moved. A
-hardcoded price tuned on devnet would under-fund every mainnet draw forever once
-the upgrade authority is `None`. So `draw_round` reads `request_fee` from ORAO's
-own `NetworkState` at call time and never stores it.
+There is no rent term because there is no per-request account. That is the whole
+of the economic change from ORAO, which charged 0.0005 SOL in fees on mainnet
+*and* entombed 0.00168 SOL of rent in every fulfilled randomness account, for
+0.00218 SOL unrecoverable per draw - about 4.4× what a draw costs now.
+
+The figure is a compile-time constant rather than something read off chain, which
+is a real difference from the ORAO adapter: ORAO published its fee in a
+`NetworkState` account so the price could be read live, while MagicBlock's is a
+`const` in their program with no account to read it from. The exposure that
+creates is bounded on purpose and lands on the house either way. The *gate* in
+`draw_round` prices a draw with this constant, so a reprice upwards would let
+through a round that no longer quite covers its own draw - a shortfall capped at
+the difference and paid out of the rake, never out of stake. The *reimbursement*
+never uses the constant at all.
 
 How the crank is made whole:
 
-* `draw_round` measures the cranker's balance across the ORAO CPI, so the
-  outlay is whatever ORAO actually charged, not an estimate.
+* `draw_round` measures the cranker's balance across the VRF CPI, so the
+  outlay is whatever MagicBlock actually charged, not an estimate. Nothing is
+  held back and nothing comes back, so the whole outlay is the cost.
 * It reimburses `cost.min(config.protocol_accrued)` out of the house cut. The
   `min` matters: the instruction can therefore never fail for lack of funds, so a
   starved till slows nothing down and cannot stall the game. A third-party crank
@@ -449,7 +542,7 @@ player funds through the other.
 
 A third guard is about liveness rather than solvency. Because that bucket is also
 the draw float, a permissionless withdrawal may only take what is above
-`DRAW_FLOAT_FLOOR` (0.05 SOL, roughly twenty mainnet draws); going below it needs
+`DRAW_FLOAT_FLOOR` (0.05 SOL, a hundred draws); going below it needs
 the treasury's own signature. Collecting revenue therefore never requires the
 house to be online, but a stranger cannot leave third-party cranks paying for
 randomness out of pocket. Pinned by `localnet/scenarios/m4-float-floor.ts`.
@@ -462,8 +555,10 @@ randomness out of pocket. Pinned by `localnet/scenarios/m4-float-floor.ts`.
 
 **Everything lives in [`programs/soldust/src/game_config.rs`](./programs/soldust/src/game_config.rs)
 and is compiled into the program.** There is no `update_config`. Changing a
-number requires a program upgrade. Mainnet should then set upgrade authority
-to `None` so even that door closes.
+number requires a program upgrade. Mainnet's upgrade authority is the Squads
+multisig `9BfEudxsWmyPP6uGHRyyMHptShK6DVufZSkYd8aaHAdx`, so the program is
+upgradeable today; the intent is still to set it to `None` once the game has run
+long enough to trust the code without a rescue hatch.
 
 `Config` stores **no** copy of these numbers. It used to, as a courtesy for
 explorers, and that was removed: a snapshot on an account protects nothing,
@@ -560,8 +655,9 @@ The frontend should drive off these rather than polling accounts.
 |---|---|
 | `StarCreated` | StarCreated |
 | `PushRequested` | PushPending (carries `round_id` and how many are sharing the draw) |
-| `RoundClosed` | the round sealed; carries the seed and the randomness address |
+| `RoundClosed` | the round sealed; carries the seed and the slot whose hash went into it |
 | `RoundRequested` | the draw was bought; carries `cost` and `cost_per_member` |
+| `RoundDrawn` | the oracle called back; carries the 32-byte draw, and is the signal a crank waits on before resolving the round's members |
 | `RoundExpired` | the round was voided; every member is now refundable |
 | `PushResolved` (`survived: true`) | PushSurvived |
 | `PushResolved` (`survived: false`) | lethal push, paired with `StarDestroyed` |
@@ -570,8 +666,9 @@ The frontend should drive off these rather than polling accounts.
 | `PushCancelled` | PushRefunded (`round_voided` says which kind of refund it was) |
 | `PrizeClaimed`, `HoleShareClaimed`, `StarCollapsed`, `ProtocolFunded`, `ProtocolFeesWithdrawn` | - |
 
-`StarDestroyed` carries the full 64-byte VRF output, the roll and the threshold,
-so anyone can verify a death independently. `yarn watch` tails the whole stream.
+`StarDestroyed` carries the full 64-byte VRF output - the oracle's 32 bytes as
+widened by `vrf::widen` - along with the roll and the threshold, so anyone can
+verify a death independently. `yarn watch` tails the whole stream.
 
 The program exposes facts only - masses, seeds, stages, rolls. It knows nothing
 about the visuals.
@@ -586,7 +683,7 @@ Requires the Solana CLI (Agave 4.x), Rust, and Anchor 1.2.0.
 cd onchain
 yarn install
 anchor build            # program + IDL + TS types
-cargo test              # 38 pure-logic unit tests
+cargo test              # 50 pure-logic unit tests
 yarn selftest           # offline IDL/encoding/seed/layout check, no network
 ./localnet/run-all.sh   # the audit scenarios, on a throwaway validator each
 ```
@@ -608,6 +705,36 @@ cannot run from a workstation - the loader wants the authority's signature.
 And `ProgramData` was allocated at exactly `45 + len`, so *any* growth in the
 binary needs `extend` first or the upgrade fails on account size.
 
+This MagicBlock binary is 3,160 bytes over the currently allocated ProgramData
+(524,248 byte `.so` + 45-byte header vs 521,133 allocated). `extend` is
+permissionless; 32,768 extra bytes costs ~0.167 SOL of rent and leaves room
+for a later patch.
+
+Cutover order, because `draw_round`'s accounts changed and the crank talks to
+them:
+
+1. Drain. `yarn show-pending` must be empty. A `Requested` round bought from
+   ORAO cannot receive a MagicBlock callback, and `resolve_push` now refuses
+   anything that is not `Drawn`, so those members would wait out
+   `ROUND_EXPIRY_SLOTS` for a refund. (Mainnet is already empty as of the
+   2026-09-17 verified build.)
+2. Pause the production crank (`fly machine stop` on `soldust-crank`'s `app`
+   process, or scale it to 0) so it cannot file an ORAO draw into the gap.
+3. `yarn verify-build sizes` then `yarn verify-build extend 32768`.
+4. `yarn verify-build buffer` — write-buffer, then hand the buffer to
+   `9BfEudxsWmyPP6uGHRyyMHptShK6DVufZSkYd8aaHAdx`.
+5. Squads → Developers → Program upgrade, program
+   `CoriumcqGZW3cdnAiyWz6jHHveMUmdrw9RC1KXfMsF8S`, that buffer. Confirm the
+   on-chain hash is `547fd72365cfbb358a21fbbcfb85006571fa1e4950f8ee524f1e130ed8f0d402`
+   (or whatever the Action produced, if it differs — deploy the Action artifact).
+6. Immediately `fly deploy -c fly.prod.toml` so the crank's `draw_round` metas
+   match. MagicBlock is already on mainnet at
+   `Vrf1RNUjXmQGjmQrQLvJHs9SNkvDJEsRVFPkfSQUwGz`, queue
+   `Cuj97ggrhhidhbu39TijNVqE74xvKJ69gDervRUXAxGh`.
+7. Land one round. `yarn tsx scripts/audit-vrf.ts --round <pda>` against it.
+   Then, if you want the explorer badge, commit, `yarn mirror-public`, and
+   `yarn verify-build pda-tx` through Squads.
+
 ```bash
 cd onchain
 yarn verify-build sizes            # binary vs allocated, tells you the deficit
@@ -615,16 +742,24 @@ yarn verify-build extend 32768     # permissionless, payer is your wallet
 yarn verify-build buffer           # write-buffer, then hand it to the vault
 ```
 
-Then Squads → Developers → Program upgrade, pointing at that buffer. Buffer rent
-comes back to the spill account when the upgrade executes.
+Buffer rent comes back to the spill account when the upgrade executes.
 
 ### Verified builds
 
 Deploys come from the Docker `.so` that
 [`solana-verify`](https://github.com/solana-foundation/solana-verifiable-build)
 produces, not from `anchor build`: only the pinned image is reproducible, and the
-explorer compares against exactly it. Devnet and mainnet both run
-`577d0e0954ed7402aee490f0f6d15af2701743822b5dae08fda76d9e433632a9`.
+explorer compares against exactly it.
+
+The two clusters are not on the same binary while the oracle migration lands:
+
+| Cluster | Deployed hash | What it is |
+|---|---|---|
+| mainnet | `577d0e0954ed7402aee490f0f6d15af2701743822b5dae08fda76d9e433632a9` | the verified ORAO build |
+| devnet | `e9b07c4998790ab76263e8bdea17db7bb80279eb436ee7801a226d0ef555d20d` | a local, **non-verified** MagicBlock build |
+| both, next | `547fd72365cfbb358a21fbbcfb85006571fa1e4950f8ee524f1e130ed8f0d402` | MagicBlock, Docker image Solana 4.0.3 / SBPF v3. Produced locally via amd64-on-arm64; confirm with the `verifiable-build` Action before quoting it as verified. |
+
+`yarn verify-build` hard-fails on `overflows the maximum allowed frame space`. This artifact passed that gate. ProgramData on mainnet is 3,160 bytes too small for it (`sizes` reports the deficit); extend before writing the buffer.
 
 ```bash
 cargo install solana-verify --locked
@@ -700,9 +835,9 @@ What the program does about each thing worth worrying about:
 | Duplicate push resolution | `resolve_push` requires `PushStatus::Pending` and sets a terminal status in the same transaction. |
 | Settling against known randomness | Impossible by construction now that randomness belongs to the round rather than to the push address. A round's seed does not exist until `draw_round` seals it, the round stops accepting members in that same transaction, and a member's `push_id` was fixed before then. Reusing a push address after `close_push` therefore gains nothing. |
 | Grinding the round seed | The `client_seed` committed at open is only one input; `draw_round` also mixes in a slot hash the crank names and the crank's own address, neither of which any member can predict, and neither of which exists when they sign. Pushing again cannot re-roll a round - a later push does not touch the seed at all. |
-| Squatting the ORAO address a seed points at | The seed and its ORAO request are created in one transaction, so there is no interval in which a published seed has an unoccupied address. Winning a same-slot race only reverts the crank's transaction: nothing is committed, the round stays `Open`, and the retry derives a different address. Reproduced in `localnet/scenarios/h1-frontrun-seed.ts`. |
+| Buying a draw for a soldust round from outside | There is no address a seed points at to squat any more, and a request that names `consume_randomness` as its callback has to be signed by `PDA(["identity"], soldust)` - the VRF program rejects an identity that does not derive from the callback program it names. Sealing and requesting stay one transaction regardless, so a seed is never public while unspent. Reproduced in `localnet/scenarios/h1-frontrun-seed.ts`. |
 | Naming a slot hash to steer the seed | `vrf::slot_hash_at` requires the slot to be present in `SlotHashes` within `SLOT_HASH_LOOKBACK`, but the discretion is not worth constraining harder: a seed cannot be evaluated without the VRF output, so there is no favourable one to choose. |
-| Voiding a round to dodge a bad roll | `expire_round` reads the ORAO account and refuses if the draw has landed. Before it lands nobody knows its value, so the choice to void is always blind. |
+| Voiding a round to dodge a bad roll | A `Drawn` round reports no stall slot at all, so `expire_round` refuses it outright - no oracle account is read, and there is no foreign layout to get wrong. Before a draw lands nobody knows its value, so the choice to void is always blind. |
 | A stalled round freezing stake forever | `expire_round` is permissionless after `ROUND_EXPIRY_SLOTS`, measured from whichever stage stalled. Members then refund with no randomness needed. |
 | A voided round wedging the queue | `star.settle_cursor` counts refunds and nursery feeds as well as live settles, so a voided batch drains through the ordering guard instead of blocking every push behind it. |
 | A dead oracle stranding a star's pot forever | `collapse_stalled_star` is permissionless once a star has gone `STALL_SECS` without gaining mass with nothing queued. It pays feeders the prize-side value of their own feeds and recycles the rest into the next star, so it can never be farmed: no caller profits, the house takes nothing, and no lamport leaves the vault. `localnet/scenarios/c3-stalled-star.ts`. |
@@ -710,21 +845,21 @@ What the program does about each thing worth worrying about:
 | A refund stranding a star below the hole cap | An expired round can hand back enough stake to drop committed mass under `HOLE_MASS` *after* the next star already exists - leaving a star that can never take mass, nova, or reach the cap. `resolve_push` detects that (`stranded()`) and collapses it into a hole, releasing the pot rather than locking it in `prize_liability`. |
 | Duplicate prize claims | `prize_claimed` is latched **before** the transfer; the whole thing reverts together on failure, so it is retryable but never double-payable. |
 | Integer overflow | `overflow-checks = true` in release, plus explicit `checked_add`/`checked_sub` returning `MathOverflow`. |
-| VRF validation | Owner, discriminator, enum tag, recorded seed and account address are all checked before the output is read. The address is pinned to `round.randomness`. |
+| VRF validation | `consume_randomness` pins its one signer to `vrf::callback_identity()` - `PDA(["identity", soldust], vrf)` - which only the VRF program can sign for and which cannot appear as a transaction signer. `draw_round` fixes the callback's account list at request time, so a draw can only reach the round that bought it. The write requires status `Requested`, so it happens once and an expired round cannot be revived, and an all-zero draw is refused because it is indistinguishable from no draw. Reproduced in `localnet/scenarios/c2-unreadable-vrf.ts`. |
 | A payout destination that can be locked forever | Payout wallets are `UncheckedAccount` pinned with `address =`, not `SystemAccount`. A system `transfer` only constrains its *source*, but `SystemAccount` insists the destination is System-owned - and a player can irreversibly assign their own wallet away from the System program, which would have made their refund permanently unclaimable. |
 | Cancelled push double refunds | Status flip and refund are in one transaction. Failure reverts both. |
 | Treasury touching player funds | Two independent guards (accrued bucket + vault balance minus reserved) on `withdraw_protocol_fees`. |
 | Star creation called twice | `init` on a deterministic PDA, plus a `next_star_created` latch on the predecessor. |
 | Pending pushes rolling forward | `PendingPush.star_id` is written at request time and the star account is seed-bound to it at resolve time. A push can only ever affect the star it was aimed at. |
 | Pause / config authority | Neither exists. `Config` has no `authority` and no `paused` field, and no instruction takes an admin signer. |
-| Draining `protocol_accrued` through the draw reimbursement | `draw_round` only runs on a round at status `Open`, flips it to `Requested` in the same transaction, and requires the ORAO account to still be empty - which the CPI then permanently occupies. One round, one draw, one reimbursement, ever. |
+| Draining `protocol_accrued` through the draw reimbursement | `draw_round` only runs on a round at status `Open` and flips it to `Requested` in the same transaction, and a round never moves backwards. One round, one draw, one reimbursement, ever. |
 | Buying a draw nobody will read | `draw_round` requires `star.is_alive()`. A star that died with a funded round behind it used to seal and draw that round out of the float, even though `resolve_push` refunds on `star.is_finished()` before it ever looks at the round. Now those members refund immediately instead of waiting. Reproduced in `localnet/scenarios/m3-dead-star-draw.ts`. |
 | Claiming the treasury by front-running the deploy | `initialize` requires the signer to be the address the loader records as the program's upgrade authority, read live out of `ProgramData`. It is the only gated instruction in the program and it is spent on first use. Reproduced in `localnet/scenarios/h2-initialize-race.ts`. |
 | A round's rent silently charged to one arbitrary member | `Round.opened_by` records whoever created the account, and `close_round_account` returns the rent to that address once `round.is_drained(star.settle_cursor)` - an exact test, since a round's members are contiguous in `push_id` and the cursor advances one at a time in order. Measured in `localnet/scenarios/m1-rent.ts`. |
 | A recycled prize opening a star with no nursery | `create_star` floors the endowment to the push step and caps it at `FEED_MASS - PUSH_STEP`, so an endowed star always has nursery room and its pot always has feeders who could claim it. Without the cap a large enough reserve would birth an unfeedable star whose pot recycles again, ratcheting an unwinnable prize forward. |
-| Crank overcharging for randomness | It cannot name an amount. The reimbursement is measured as the cranker's own balance delta across the ORAO CPI, capped at `protocol_accrued`. |
-| A crank paying ORAO's fee into its own pocket | Measuring the balance delta means a fee that went somewhere the cranker controls would be reimbursed all the same, so `draw_round` pins `vrf_treasury` to the treasury ORAO's own network state names (`vrf::require_network_treasury`). ORAO pins it too; the point is not to depend on that, since ORAO stays upgradeable and this program is meant not to. |
-| Ordinary traffic reverting a draw that is already in flight | `round.entropy` is written once, by the push that opened the round, and every other seed input is either fixed then or chosen by the caller - so the ORAO address a crank derives cannot move under it. It used to accumulate over every arrival, which made the address a function of mempool ordering: any push confirming in the gap failed the crank's draw, worst on the busiest stars, with the batch expiring into refunds if nobody won a gap. Reproduced in `localnet/scenarios/h3-draw-race.ts`. |
+| Crank overcharging for randomness | It cannot name an amount. The reimbursement is measured as the cranker's own balance delta across the VRF CPI, capped at `protocol_accrued`. |
+| A crank paying the request fee into its own pocket | Measuring the balance delta means a fee that went somewhere the cranker controls would be reimbursed all the same. Anybody may stand up a MagicBlock oracle queue with their own signature, and the fee is paid *into* the queue, so `draw_round` pins `vrf_queue` to `vrf::VRF_QUEUE`. Without it a cranker could file against a queue they own, take the reimbursement, and recover the fee by closing it. This is the direct successor of the ORAO adapter's treasury pin and it protects the same thing: the house's float. |
+| Ordinary traffic reverting a draw that is already in flight | `round.entropy` is written once, by the push that opened the round, and every other seed input is either fixed then or chosen by the caller. It used to accumulate over every arrival, which made the ORAO randomness address a function of mempool ordering: any push confirming in the gap failed the crank's draw, worst on the busiest stars, with the batch expiring into refunds if nobody won a gap. There is no derived address left to miss, so what the frozen field now protects is the off-chain derivation the crank uses to match a queued request to its round and the clients use to replay a roll. Reproduced in `localnet/scenarios/h3-draw-race.ts`. |
 | Sweeping the float the game buys randomness with | `withdraw_protocol_fees` stays permissionless only down to `DRAW_FLOAT_FLOOR`; below it the treasury has to sign. Nothing about a sweep ever misdirected money - the destination is frozen - but at zero float a third-party crank pays for every draw itself, which is the incentive the game's liveness rests on. Reproduced in `localnet/scenarios/m4-float-floor.ts`. |
 | Resolver funding accounts it never gets back | It doesn't. `StarFeed` and `FeedShare` are created and paid for by `request_push`, so `resolve_push` initialises nothing. |
 | Vault reaped for rent | Funded to the rent-exempt minimum at `initialize`, and withdrawals reserve it. |
@@ -737,21 +872,28 @@ Known gaps and deliberate simplifications, roughly in priority order.
 
 1. **No external audit.** There has been an internal one, and everything it
    found is fixed and pinned by a scenario in [`localnet/`](./localnet/README.md)
-   that runs against a real validator with a mock ORAO in ORAO's place. That is
-   coverage of the paths that were known to be wrong, not of the paths nobody has
-   thought of yet - which is what an audit is for. Nothing here has been reviewed
-   by anyone outside the project, and none of it has held real money.
+   that runs against a real validator with a mock oracle in MagicBlock's place.
+   That is coverage of the paths that were known to be wrong, not of the paths
+   nobody has thought of yet - which is what an audit is for. Nothing here has
+   been reviewed by anyone outside the project, and none of it has held real
+   money.
 2. **Upgrade authority is the remaining trust surface - close it on mainnet.**
    Game numbers are compiled in (`game_config.rs`); there is no `update_config`.
-   After you have verified the mainnet deploy, make the program immutable:
+   Mainnet's authority is currently the Squads multisig
+   `9BfEudxsWmyPP6uGHRyyMHptShK6DVufZSkYd8aaHAdx`, so the program is upgradeable
+   today and should be read as one. After you have verified the mainnet deploy,
+   make it immutable:
 
    ```bash
    solana program set-upgrade-authority CoriumcqGZW3cdnAiyWz6jHHveMUmdrw9RC1KXfMsF8S --final
    ```
 
-   That is irreversible. Do not run it on the current devnet deployment if you
-   still want to iterate. Treasury is frozen at initialize; anyone can crank
-   `withdraw_protocol_fees` to that address, down to the draw float floor.
+   The vault holds the authority, so that has to be executed through Squads
+   rather than from a workstation - same constraint as any other upgrade, see
+   [Upgrading mainnet](#upgrading-mainnet). It is irreversible. Do not run it on
+   the current devnet deployment if you still want to iterate. Treasury is frozen
+   at initialize; anyone can crank `withdraw_protocol_fees` to that address, down
+   to the draw float floor.
 3. **A resolve can be delayed, not corrupted, and no longer indefinitely.**
    Nobody can change an outcome, and a stalled round is now voidable by anyone
    after `ROUND_EXPIRY_SLOTS` so escrow always has an exit. What is still worth
@@ -761,13 +903,18 @@ Known gaps and deliberate simplifications, roughly in priority order.
    `cost.min(protocol_accrued)`, so it can never fail - but a house crank running
    against a starved `protocol_accrued` is paying for draws out of its own
    pocket. `fund_protocol` seeds it at genesis; after that the rake refills it as
-   long as volume clears the break-even (~0.07 SOL of stake per round at 314 bps).
-   `DRAW_FLOAT_FLOOR` stops a stranger sweeping it to zero, but it is a floor, not
-   a budget: the house can still sign that last 0.05 SOL away, and a star quiet
-   enough to earn nothing will drain it. Watch `yarn show-config`.
-5. **ORAO is a trusted quorum**, not a trustless beacon. Its fulfillment
-   authorities could in principle collude. Evaluate that against the jackpot
-   size, and consider Switchboard On-Demand as a second source.
+   long as volume clears the break-even (~0.016 SOL of stake per round at 314
+   bps, two minimum pushes). `DRAW_FLOAT_FLOOR` stops a stranger sweeping it to
+   zero, but it is a floor, not a budget: the house can still sign that last
+   0.05 SOL away, and a star quiet enough to earn nothing will drain it. Watch
+   `yarn show-config`.
+5. **MagicBlock's oracles are a trusted set**, not a trustless beacon. They
+   produce RFC 9381 proofs the VRF program verifies, so a draw cannot be forged,
+   but the oracles could in principle collude on what to answer - or simply
+   withhold. Withholding is covered: `ROUND_EXPIRY_SLOTS` plus `expire_round` and
+   `collapse_stalled_star` refund on slots alone, with no oracle involvement.
+   Collusion is not, so evaluate it against the jackpot size and consider a
+   second source.
 6. **Unclaimed prizes are owed forever.** `prize_liability` never decays, so a
    winner who loses their key permanently locks that SOL in the vault. It is
    correct, but mainnet probably wants an expiry after which an unclaimed prize

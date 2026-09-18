@@ -62,13 +62,15 @@ pub const MAX_STAGES: usize = 7;
 ///
 /// So a permissionless withdrawal may only take what is above this, and the
 /// treasury can sign for its own withdrawal to take the rest. 0.05 SOL is about
-/// twenty mainnet draws - enough to keep a star moving until a human notices,
-/// small enough that it is never where the revenue is.
+/// a hundred draws - enough to keep a star moving until a human notices, small
+/// enough that it is never where the revenue is. It bought twenty under the
+/// ORAO adapter, whose draw cost 4.4x more; the floor was left where it is
+/// because its job is to be a buffer, not a balance.
 pub const DRAW_FLOAT_FLOOR: u64 = LAMPORTS_PER_SOL / 20;
 
 // ------------------------------------------------------------------- rounds
 //
-// One ORAO draw serves every push queued in the same round, so the oracle
+// One draw serves every push queued in the same round, so the oracle
 // costs `cost / member_count` per push instead of `cost` per push. Slots are
 // roughly 400ms; the figures below are quoted in slots because that is what
 // the runtime gives us and it cannot be gamed by a validator clock.
@@ -95,15 +97,20 @@ pub const ROUND_TARGET_MEMBERS: u64 = 24;
 
 /// How long a round may sit un-drawn before anyone can void it. ~5 minutes.
 ///
-/// This is the escape hatch that stops a star freezing forever. If ORAO stops
-/// answering, or the crank dies between closing a round and buying its draw,
-/// every push in that round becomes refundable and the star carries on with a
-/// fresh round. Without it an unfulfilled request would strand the queue head
-/// permanently, and with no upgrade authority there would be no way back.
+/// This is the escape hatch that stops a star freezing forever. If the oracle
+/// stops answering, or the crank dies between sealing a round and its draw
+/// landing, every push in that round becomes refundable and the star carries on
+/// with a fresh round. Without it an unanswered request would strand the queue
+/// head permanently, and nothing short of a new binary could free it.
 ///
-/// Generous on purpose: ORAO normally answers inside a second, so five minutes
-/// only fires when something is genuinely broken. A round that expires costs
-/// the house the draw it already paid for and costs players nothing but time.
+/// Withholding a draw is the one thing an oracle can still do to this program,
+/// so this is the constant that answers it - and it answers it on slots alone,
+/// with no oracle account to read and no oracle cooperation needed.
+///
+/// Generous on purpose: the oracle normally answers within a slot or two, so
+/// five minutes only fires when something is genuinely broken. A round that
+/// expires costs the house the draw it already paid for and costs players
+/// nothing but time.
 pub const ROUND_EXPIRY_SLOTS: u64 = 750;
 
 // ------------------------------------------------------------------- stalling

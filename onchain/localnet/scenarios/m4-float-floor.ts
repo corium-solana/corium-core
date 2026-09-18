@@ -23,6 +23,7 @@ import {
   bootstrap,
   conclude,
   connect,
+  drawCost,
   head,
   mustFail,
   newPlayer,
@@ -83,7 +84,11 @@ async function main() {
   assert(Number(emptied.protocolAccrued) === 0, 'the float is the house\'s to close, and only the house\'s');
 
   act('what the floor is worth');
-  say(`${sol(DRAW_FLOAT_FLOOR)} is roughly twenty draws - enough that a star keeps`);
+  const cost = await drawCost(w);
+  say(
+    `${sol(DRAW_FLOAT_FLOOR)} is ${Math.floor(DRAW_FLOAT_FLOOR / cost)} draws at ` +
+      `${sol(cost)} each - enough that a star keeps`
+  );
   say('  moving on third-party cranks while a human notices the rake is due');
   say('nobody gained a claim on the money: the destination never moved, and a');
   say('  stranger cranking a withdrawal still pays a fee to hand the house cash');

@@ -3,7 +3,7 @@
  *
  * Deliberately self-contained: it talks to the program through the IDL and
  * nothing else, so a scenario passing or failing says something about the
- * program rather than about `shared/chain`. The mock ORAO instructions are
+ * program rather than about `shared/chain`. The mock VRF instructions are
  * hand-encoded for the same reason.
  */
 
@@ -25,11 +25,17 @@ import {
 
 export const RPC = process.env.LOCALNET_RPC ?? 'http://127.0.0.1:8899';
 
-export const ORAO_ID = new PublicKey('VRFzZoJdhFWL8rkvu87LpKM3RbcVezpMEc6X5GVDr7y');
+export const VRF_PROGRAM_ID = new PublicKey('Vrf1RNUjXmQGjmQrQLvJHs9SNkvDJEsRVFPkfSQUwGz');
+/** The queue soldust pins. Its address is all soldust knows about it. */
+export const VRF_QUEUE = new PublicKey('Cuj97ggrhhidhbu39TijNVqE74xvKJ69gDervRUXAxGh');
 export const BPF_LOADER_UPGRADEABLE = new PublicKey(
   'BPFLoaderUpgradeab1e11111111111111111111111'
 );
-/** ORAO's real mainnet request fee, so the economics gate behaves as it will live. */
+/**
+ * MagicBlock's real request fee (`VRF_LAMPORTS_COST`), so the economics gate
+ * behaves as it will live. Unlike ORAO there is no second, unrecoverable rent
+ * term: this is the whole cost of a draw.
+ */
 export const REQUEST_FEE = 500_000;
 
 export const PUSH_STEP = LAMPORTS_PER_SOL / 100;
@@ -88,6 +94,25 @@ export function conclude(name: string) {
 
 // ------------------------------------------------------------------- errors
 
+/**
+ * Runtime failures that never carry an Anchor error code, mapped to the name
+ * the `ProgramError` variant goes by.
+ *
+ * Needed because the checks guarding the oracle boundary are enforced by the
+ * runtime and by the VRF program, not by Anchor: a missing identity signature
+ * or an identity that does not derive from soldust fails before any
+ * `#[account]` constraint runs. Without this a scenario would have to match on
+ * a prose sentence.
+ */
+const RUNTIME_ERRORS: [RegExp, string][] = [
+  [/missing required signature/i, 'MissingRequiredSignature'],
+  [/seeds do not result in a valid address/i, 'InvalidSeeds'],
+  [/insufficient account keys/i, 'NotEnoughAccountKeys'],
+  [/instruction spent from the balance of an account it does not own/i, 'ExternalAccountLamportSpend'],
+  [/account is not owned by|IllegalOwner/i, 'IllegalOwner'],
+  [/privilege escalation/i, 'PrivilegeEscalation'],
+];
+
 /** Anchor error code name, however the RPC chose to wrap it. */
 export function errCode(e: any): string {
   const direct = e?.error?.errorCode?.code;
@@ -97,8 +122,14 @@ export function errCode(e: any): string {
     const m = line.match(/Error Code: (\w+)/);
     if (m) return m[1];
   }
-  const m = String(e?.message ?? e).match(/Error Code: (\w+)/);
-  return m ? m[1] : String(e?.message ?? e).slice(0, 160);
+  const text = String(e?.message ?? e);
+  const m = text.match(/Error Code: (\w+)/);
+  if (m) return m[1];
+  const haystack = `${text}\n${logs.join('\n')}`;
+  for (const [pattern, name] of RUNTIME_ERRORS) {
+    if (pattern.test(haystack)) return name;
+  }
+  return text.slice(0, 160);
 }
 
 /** Run something that must fail, and report which error came back. */
@@ -162,15 +193,22 @@ export async function connect() {
     starFeed: (starId: number) => pda([Buffer.from('feed'), u64(starId)]),
     feedShare: (starId: number, player: PublicKey) =>
       pda([Buffer.from('feed-share'), u64(starId), player.toBuffer()]),
-    oraoNetwork: PublicKey.findProgramAddressSync(
-      [Buffer.from('orao-vrf-network-configuration')],
-      ORAO_ID
+    vrfQueue: VRF_QUEUE,
+    /**
+     * `PDA(["identity"], soldust)`. Soldust signs its *requests* with this, and
+     * MagicBlock refuses a request whose identity does not derive from the
+     * callback program it names - which is what makes it impossible for anyone
+     * but soldust to aim a draw at a soldust round.
+     */
+    vrfIdentity: pda([Buffer.from('identity')]),
+    /**
+     * `PDA(["identity", soldust], vrf)`. The VRF program signs its *callbacks*
+     * with this, and `consume_randomness` accepts nothing else.
+     */
+    vrfCallbackIdentity: PublicKey.findProgramAddressSync(
+      [Buffer.from('identity'), programId.toBuffer()],
+      VRF_PROGRAM_ID
     )[0],
-    oraoRequest: (seed: Buffer | Uint8Array) =>
-      PublicKey.findProgramAddressSync(
-        [Buffer.from('orao-vrf-randomness-request'), Buffer.from(seed)],
-        ORAO_ID
-      )[0],
   };
 
   await fund(w, payer.publicKey, 500 * LAMPORTS_PER_SOL);
@@ -207,89 +245,189 @@ async function send(w: World, ixs: TransactionInstruction[], signers: Keypair[])
   return w.provider.sendAndConfirm(tx, signers, { commitment: 'confirmed' });
 }
 
-// -------------------------------------------------------- mock ORAO clients
+// --------------------------------------------------- mock MagicBlock clients
 
 const disc = (name: string) =>
   createHash('sha256').update(`global:${name}`).digest().subarray(0, 8);
 
 /**
- * ORAO's genesis network configuration. Sets the request fee soldust prices
- * draws against.
+ * Harness-only instruction tags on the mock. MagicBlock's own tags are small
+ * integers in the low byte of a u64, so these cannot collide with a real one.
  */
-export async function oraoInit(w: World, treasury: PublicKey, fee = REQUEST_FEE) {
-  // ORAO's live treasury is a long-funded account. An empty one here would make
-  // every request fail the runtime's rent-exemption check on the fee transfer,
-  // which is an artefact of the harness rather than anything about soldust.
-  await fund(w, treasury, LAMPORTS_PER_SOL);
-  const data = Buffer.concat([disc('mock_init_network'), u64(fee), treasury.toBuffer()]);
-  const ix = new TransactionInstruction({
-    programId: ORAO_ID,
-    keys: [
-      { pubkey: w.payer.publicKey, isSigner: true, isWritable: true },
-      { pubkey: w.oraoNetwork, isSigner: false, isWritable: true },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    ],
-    data,
-  });
-  return send(w, [ix], [w.payer]);
+const IX_MOCK_FULFILL = Buffer.from([0xf0, 0, 0, 0, 0, 0, 0, 0]);
+const IX_MOCK_FULFILL_UNPINNED = Buffer.from([0xf1, 0, 0, 0, 0, 0, 0, 0]);
+
+/**
+ * A 32-byte draw as `roll_for` sees it: right-padded to 64.
+ *
+ * Mirrors `vrf::widen`. Anything that predicts a roll has to go through this,
+ * because grinding a 64-byte buffer directly would search a space the chain
+ * can never produce.
+ */
+export function widen(randomness: Buffer | Uint8Array): Buffer {
+  const wide = Buffer.alloc(64);
+  Buffer.from(randomness).copy(wide, 0, 0, 32);
+  return wide;
 }
 
-/** What ORAO's oracles do off-chain: land the draw. */
-export async function oraoFulfill(w: World, request: PublicKey, fill?: Buffer) {
-  const randomness = fill ?? Buffer.alloc(64, 0x11);
-  const ix = new TransactionInstruction({
-    programId: ORAO_ID,
-    keys: [
-      { pubkey: w.payer.publicKey, isSigner: true, isWritable: false },
-      { pubkey: request, isSigner: false, isWritable: true },
-    ],
-    data: Buffer.concat([disc('mock_fulfill'), randomness]),
-  });
-  return send(w, [ix], [w.payer]);
-}
+/**
+ * Nothing to do: `validator.sh` pre-loads the queue at its pinned address,
+ * owned by the mock, because that is where the mock stores requests.
+ *
+ * Kept as a named step so `bootstrap` still reads as a list of the things a
+ * world needs. Replaces `oraoInit`, which had to publish a fee and a treasury
+ * for soldust to read - neither exists under MagicBlock, where the fee is a
+ * constant and the queue is pinned by address.
+ */
+export async function vrfInit(_w: World) {}
 
-/** Simulate ORAO moving the layout soldust hardcodes. 0=discriminator, 1=tag, 2=seed. */
-export async function oraoCorrupt(w: World, request: PublicKey, mode: number) {
+/**
+ * What the oracle network does off-chain, then submits: land the draw.
+ *
+ * The mock replays the request it parked - callback program, discriminator,
+ * accounts and args all come from there, not from here - and signs the CPI with
+ * `PDA(["identity", soldust], vrf)`. So this call proves the real thing: that
+ * soldust accepts a draw *only* when it arrives as a callback carrying a
+ * signature nothing outside the VRF program can produce.
+ *
+ * `fill` is a 32-byte draw; the default is recognisable in logs but otherwise
+ * arbitrary.
+ */
+export async function vrfFulfill(
+  w: World,
+  starId: number,
+  roundId: number,
+  seed: Buffer | Uint8Array,
+  fill?: Buffer | Uint8Array
+) {
+  const randomness = Buffer.alloc(32, 0x11);
+  if (fill) Buffer.from(fill).copy(randomness, 0, 0, 32);
+  // MagicBlock refuses a fulfilment in the request's own slot, so a real oracle
+  // never answers faster than this either.
+  await waitUntilSlot(w, (await slot(w)) + 1, 'the oracle cannot answer in the request slot');
   const ix = new TransactionInstruction({
-    programId: ORAO_ID,
+    programId: VRF_PROGRAM_ID,
     keys: [
-      { pubkey: w.payer.publicKey, isSigner: true, isWritable: false },
-      { pubkey: request, isSigner: false, isWritable: true },
+      { pubkey: VRF_QUEUE, isSigner: false, isWritable: true },
+      { pubkey: w.programId, isSigner: false, isWritable: false },
+      // Not a signer here. It becomes one inside the CPI, which is the whole
+      // point - a transaction cannot present this key.
+      { pubkey: w.vrfCallbackIdentity, isSigner: false, isWritable: false },
+      { pubkey: w.round(starId, roundId), isSigner: false, isWritable: true },
     ],
-    data: Buffer.concat([disc('mock_corrupt'), Buffer.from([mode])]),
+    data: Buffer.concat([IX_MOCK_FULFILL, Buffer.from(seed), randomness]),
   });
   return send(w, [ix], [w.payer]);
 }
 
 /**
- * Call ORAO's `request_v2` directly, as any stranger can. Used to occupy the
- * address a sealed round has already committed to.
+ * A VRF program that has stopped honouring its own queue: deliver a draw to a
+ * round of the caller's choosing, ignoring what the request recorded.
+ *
+ * Unreachable by an outsider against the real program, which reads its callback
+ * accounts off the queue item. Only MagicBlock could do this, by shipping an
+ * upgrade. It is here so the suite can state on the record what a compromised
+ * oracle can and cannot do to soldust.
  */
-export async function oraoRequestDirect(
+export async function vrfFulfillUnpinned(
+  w: World,
+  round: PublicKey,
+  fill: Buffer | Uint8Array
+) {
+  const randomness = Buffer.alloc(32);
+  Buffer.from(fill).copy(randomness, 0, 0, 32);
+  const ix = new TransactionInstruction({
+    programId: VRF_PROGRAM_ID,
+    keys: [
+      { pubkey: w.programId, isSigner: false, isWritable: false },
+      { pubkey: w.vrfCallbackIdentity, isSigner: false, isWritable: false },
+      { pubkey: round, isSigner: false, isWritable: true },
+    ],
+    data: Buffer.concat([
+      IX_MOCK_FULFILL_UNPINNED,
+      randomness,
+      disc('consume_randomness'),
+    ]),
+  });
+  return send(w, [ix], [w.payer]);
+}
+
+/**
+ * File a scoped randomness request against the VRF program directly, as a
+ * stranger would, naming soldust as the callback program.
+ *
+ * The replacement for `oraoRequestDirect`. ORAO's `request_v2` was open to
+ * anyone, which is what made squatting a round's randomness address possible;
+ * MagicBlock requires the request to be signed by
+ * `PDA(["identity"], callback_program)`, so this is the call that proves an
+ * outsider cannot buy a draw on soldust's behalf. `identity` defaults to
+ * soldust's real request identity - which the caller cannot sign for - and
+ * `sign` controls whether it is even presented as a signer.
+ */
+export async function vrfRequestDirect(
   w: World,
   from: Keypair,
-  seed: Buffer,
-  treasury: PublicKey
+  opts: { identity?: PublicKey; sign?: Keypair; seed?: Buffer } = {}
 ) {
+  const seed = opts.seed ?? Buffer.alloc(32, 0xab);
+  const identity = opts.sign?.publicKey ?? opts.identity ?? w.vrfIdentity;
+  const data = Buffer.concat([
+    Buffer.from([10, 0, 0, 0, 0, 0, 0, 0]), // RequestRandomnessScoped
+    seed,
+    w.programId.toBuffer(),
+    Buffer.from(new Uint32Array([8]).buffer),
+    disc('consume_randomness'),
+    Buffer.from(new Uint32Array([1]).buffer),
+    w.round(1, 0).toBuffer(),
+    Buffer.from([0, 1]),
+    Buffer.from(new Uint32Array([0]).buffer),
+  ]);
   const ix = new TransactionInstruction({
-    programId: ORAO_ID,
+    programId: VRF_PROGRAM_ID,
     keys: [
       { pubkey: from.publicKey, isSigner: true, isWritable: true },
-      { pubkey: w.oraoNetwork, isSigner: false, isWritable: true },
-      { pubkey: treasury, isSigner: false, isWritable: true },
-      { pubkey: w.oraoRequest(seed), isSigner: false, isWritable: true },
+      { pubkey: identity, isSigner: !!opts.sign, isWritable: false },
+      { pubkey: VRF_QUEUE, isSigner: false, isWritable: true },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: SYSVAR_SLOT_HASHES_PUBKEY, isSigner: false, isWritable: false },
     ],
-    data: Buffer.concat([disc('request_v2'), seed]),
+    data,
   });
   const tx = new Transaction().add(ix);
   tx.feePayer = from.publicKey;
   const { blockhash } = await w.connection.getLatestBlockhash();
   tx.recentBlockhash = blockhash;
-  tx.sign(from);
+  tx.sign(...(opts.sign ? [from, opts.sign] : [from]));
   const sig = await w.connection.sendRawTransaction(tx.serialize());
   await w.connection.confirmTransaction(sig, 'confirmed');
   return sig;
+}
+
+/**
+ * Call `consume_randomness` head-on, with a signer of the caller's choosing
+ * standing in for the VRF identity.
+ *
+ * The forgery the callback model has to refuse. Defaults to an arbitrary
+ * keypair; pass `as` to try a specific one.
+ */
+export async function consumeRandomnessDirect(
+  w: World,
+  starId: number,
+  roundId: number,
+  fill: Buffer | Uint8Array,
+  opts: { as?: Keypair } = {}
+) {
+  const impostor = opts.as ?? Keypair.generate();
+  const randomness = Buffer.alloc(32);
+  Buffer.from(fill).copy(randomness, 0, 0, 32);
+  return w.program.methods
+    .consumeRandomness(Array.from(randomness))
+    .accountsPartial({
+      vrfIdentity: impostor.publicKey,
+      round: w.round(starId, roundId),
+    })
+    .signers([impostor])
+    .rpc();
 }
 
 // ------------------------------------------------------------ soldust calls
@@ -460,16 +598,16 @@ export async function recentSlotHash(w: World) {
 /**
  * Seal a round and buy its draw, in one transaction.
  *
- * The caller has to derive the seed itself now, because the ORAO account address
- * follows from it and Solana needs every address up front. `seedSlot` lets a
- * scenario pin the slot to reproduce a specific address; otherwise it takes the
- * newest one, which is what the real crank does.
+ * The caller still derives the seed itself, but for a different reason than it
+ * did under ORAO: nothing addressable follows from the seed any more, and the
+ * mock needs it only to name the account it parks the request in. `seedSlot`
+ * lets a scenario pin the slot to reproduce a specific seed; otherwise it takes
+ * the newest one, which is what the real crank does.
  */
 export async function drawRound(
   w: World,
   starId: number,
   roundId: number,
-  treasury: PublicKey,
   opts: { cranker?: Keypair; seedSlot?: bigint; slotHash?: Buffer } = {}
 ) {
   const cranker = opts.cranker ?? w.payer;
@@ -478,7 +616,6 @@ export async function drawRound(
   const seedSlot = opts.seedSlot ?? recent.slot;
   const slotHash = opts.slotHash ?? recent.hash;
   const seed = roundSeed(starId, roundId, round.entropy, seedSlot, slotHash, cranker.publicKey);
-  const request = w.oraoRequest(seed);
 
   await w.program.methods
     .drawRound(new BN(seedSlot.toString()))
@@ -489,16 +626,26 @@ export async function drawRound(
       star: w.star(starId),
       round: w.round(starId, roundId),
       slotHashes: SYSVAR_SLOT_HASHES_PUBKEY,
-      vrfProgram: ORAO_ID,
-      vrfNetworkState: w.oraoNetwork,
-      vrfTreasury: treasury,
-      vrfRequest: request,
+      vrfProgram: VRF_PROGRAM_ID,
+      vrfIdentity: w.vrfIdentity,
+      vrfQueue: w.vrfQueue,
       systemProgram: SystemProgram.programId,
     })
     .signers(cranker === w.payer ? [] : [cranker])
     .rpc();
 
-  return { seed, request, seedSlot };
+  return { seed, seedSlot, round: w.round(starId, roundId) };
+}
+
+/** The mock's queue, for scenarios that want to look at what is in flight. */
+export async function queuedSeeds(w: World): Promise<string[]> {
+  const info = await w.connection.getAccountInfo(VRF_QUEUE);
+  if (!info) return [];
+  const out: string[] = [];
+  for (let at = 8; at + 512 <= info.data.length; at += 512) {
+    if (info.data[at] !== 0) out.push(info.data.subarray(at + 33, at + 65).toString('hex'));
+  }
+  return out;
 }
 
 export async function closeRoundAccount(w: World, starId: number, roundId: number) {
@@ -515,17 +662,16 @@ export async function closeRoundAccount(w: World, starId: number, roundId: numbe
 }
 
 export async function expireRound(w: World, starId: number, roundId: number) {
-  const round: any = await w.program.account.round.fetch(w.round(starId, roundId));
-  const randomness = new PublicKey(round.randomness);
+  // No oracle account to name any more. Voiding is now purely a question of the
+  // round's own status and how long it has sat there, which is why the ORAO
+  // adapter's "is this account unreadable or merely unanswered" problem
+  // disappeared with it.
   return w.program.methods
     .expireRound()
     .accountsPartial({
       cranker: w.payer.publicKey,
       star: w.star(starId),
       round: w.round(starId, roundId),
-      // Default when the round never got as far as being requested; the program
-      // only reads it in the `Requested` branch.
-      vrfRequest: randomness.equals(PublicKey.default) ? SystemProgram.programId : randomness,
     })
     .rpc();
 }
@@ -534,8 +680,6 @@ export async function resolvePush(w: World, p: Push) {
   const push: any = await w.program.account.pendingPush.fetch(p.pda);
   const starId = Number(push.starId);
   const roundId = Number(push.roundId);
-  const round: any = await w.program.account.round.fetch(w.round(starId, roundId));
-  const randomness = new PublicKey(round.randomness);
   return w.program.methods
     .resolvePush()
     .accountsPartial({
@@ -547,7 +691,6 @@ export async function resolvePush(w: World, p: Push) {
       round: w.round(starId, roundId),
       playerStats: w.playerStats(new PublicKey(push.player)),
       playerWallet: new PublicKey(push.player),
-      vrfRequest: randomness.equals(PublicKey.default) ? SystemProgram.programId : randomness,
       starFeed: w.starFeed(starId),
       feedShare: w.feedShare(starId, new PublicKey(push.player)),
       systemProgram: SystemProgram.programId,
@@ -586,11 +729,15 @@ export async function pushStatus(w: World, p: Push) {
 
 /**
  * The economic bar `draw_round` enforces: a round only seals once its own rake
- * covers what ORAO charges. Mirrors `Round::rake` and `vrf::draw_cost_estimate`.
+ * covers what MagicBlock charges. Mirrors `Round::rake` and
+ * `vrf::draw_cost_estimate`.
+ *
+ * Takes the world only so the signature survived the ORAO version, which had to
+ * ask the chain for a rent-exemption figure. MagicBlock entombs no rent, so the
+ * cost is now a constant and the bar sits roughly four times lower.
  */
-export async function drawCost(w: World) {
-  const rentFulfilled = await w.connection.getMinimumBalanceForRentExemption(137);
-  return REQUEST_FEE + rentFulfilled;
+export async function drawCost(_w: World) {
+  return REQUEST_FEE;
 }
 
 export async function stakeNeededForDraw(w: World) {
@@ -601,10 +748,16 @@ export async function stakeNeededForDraw(w: World) {
 
 // ------------------------------------------------------- forcing an outcome
 
-/** Mirrors `vrf::roll_for`: sha256("soldust:roll" ‖ draw ‖ push_id_le)[..16] mod 1e9. */
-export function rollFor(randomness: Buffer, pushId: number): number {
+/**
+ * Mirrors `vrf::roll_for`: sha256("soldust:roll" ‖ draw ‖ push_id_le)[..16] mod 1e9.
+ *
+ * Always hashes the wide form, so a 32-byte oracle draw and the 64 bytes the
+ * chain actually rolls over agree. Passing an already-widened buffer is a no-op.
+ */
+export function rollFor(randomness: Buffer | Uint8Array, pushId: number): number {
+  const wide = randomness.length === 64 ? Buffer.from(randomness) : widen(randomness);
   const h = createHash('sha256')
-    .update(Buffer.concat([Buffer.from('soldust:roll'), randomness, u64(pushId)]))
+    .update(Buffer.concat([Buffer.from('soldust:roll'), wide, u64(pushId)]))
     .digest();
   let v = 0n;
   for (let i = 15; i >= 0; i--) v = (v << 8n) | BigInt(h[i]);
@@ -624,9 +777,12 @@ export const novaPpb = (accepted: number, massAfter: number) =>
  */
 export function grindRoll(pushId: number, thresholdPpb: number, lethal = true): Buffer {
   for (let i = 0; i < 5_000_000; i++) {
-    const r = Buffer.alloc(64);
+    // 32 bytes, because that is all the oracle delivers. Grinding the 64-byte
+    // form would search draws the chain can never produce, since `widen` zeroes
+    // the upper half.
+    const r = Buffer.alloc(32);
     r.writeUInt32LE(i, 0);
-    r.writeUInt32LE(i ^ 0x5a5a5a5a, 60);
+    r.writeUInt32LE(i ^ 0x5a5a5a5a, 28);
     if (rollFor(r, pushId) < thresholdPpb === lethal) return r;
   }
   throw new Error(`no draw found for push ${pushId} at threshold ${thresholdPpb}`);
@@ -642,9 +798,9 @@ export function grindRoll(pushId: number, thresholdPpb: number, lethal = true): 
  */
 export function grindSurvival(members: { pushId: number; thresholdPpb: number }[]): Buffer {
   for (let i = 0; i < 5_000_000; i++) {
-    const r = Buffer.alloc(64);
+    const r = Buffer.alloc(32);
     r.writeUInt32LE(i, 0);
-    r.writeUInt32LE(i ^ 0x5a5a5a5a, 60);
+    r.writeUInt32LE(i ^ 0x5a5a5a5a, 28);
     if (members.every((m) => rollFor(r, m.pushId) >= m.thresholdPpb)) return r;
   }
   throw new Error('no draw found where every member survives');
@@ -656,8 +812,8 @@ export function grindSurvival(members: { pushId: number; thresholdPpb: number }[
  */
 export async function bootstrap(w: World, treasury: PublicKey) {
   act('bootstrap: initialize, fund the float, birth star #1, fill the nursery');
-  await oraoInit(w, treasury);
-  say(`mock ORAO network state at ${w.oraoNetwork.toBase58()} (fee ${REQUEST_FEE})`);
+  await vrfInit(w);
+  say(`mock VRF queue at ${VRF_QUEUE.toBase58()} (fee ${REQUEST_FEE})`);
   await initialize(w, treasury);
   await fundProtocol(w, 2 * LAMPORTS_PER_SOL);
   await createFirstStar(w);
@@ -666,13 +822,17 @@ export async function bootstrap(w: World, treasury: PublicKey) {
   return s;
 }
 
-/** Wait out a round's window, seal-and-draw it, and optionally land the draw. */
+/**
+ * Wait out a round's window, seal-and-draw it, and optionally land the draw.
+ *
+ * Returns the seed, which is what a scenario needs to drive the mock later -
+ * the ORAO version returned an account address, and there is no longer one.
+ */
 export async function sealAndDraw(
   w: World,
   starId: number,
   roundId: number,
-  treasury: PublicKey,
-  opts: { fulfill?: boolean } = {}
+  opts: { fulfill?: boolean; fill?: Buffer | Uint8Array } = {}
 ) {
   const round: any = await w.program.account.round.fetch(w.round(starId, roundId));
   await waitUntilSlot(
@@ -680,13 +840,13 @@ export async function sealAndDraw(
     Number(round.openedSlot) + ROUND_WINDOW_SLOTS,
     `round #${roundId} window (${ROUND_WINDOW_SLOTS} slots)`
   );
-  const { request } = await drawRound(w, starId, roundId, treasury);
-  say(`sealed round #${roundId} and bought its draw, randomness at ${request.toBase58()}`);
+  const { seed } = await drawRound(w, starId, roundId);
+  say(`sealed round #${roundId} and bought its draw, seed ${seed.toString('hex').slice(0, 16)}...`);
   if (opts.fulfill !== false) {
-    await oraoFulfill(w, request);
-    say(`ORAO landed the draw for round #${roundId}`);
+    await vrfFulfill(w, starId, roundId, seed, opts.fill);
+    say(`the oracle landed the draw for round #${roundId}`);
   }
-  return request;
+  return seed;
 }
 
 /** Waits out the window without sealing, so a scenario can drive the draw itself. */

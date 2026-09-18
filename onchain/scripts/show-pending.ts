@@ -11,12 +11,11 @@
  */
 
 import { drawBreakEvenStake } from '../../shared/chain/economics.js';
-import { fetchDrawCost } from '../../shared/chain/orao.js';
+import { fetchDrawCost } from '../../shared/chain/vrf.js';
 
 import {
   context,
   enumName,
-  fetchRandomness,
   parseArgs,
   roundPda,
   sol,
@@ -91,15 +90,14 @@ async function main() {
           );
         } else if (rs === 'expired') {
           console.log('  vrf        round VOIDED - refundable now, no randomness needed');
+        } else if (rs === 'requested') {
+          console.log('  vrf        draw bought - waiting on the oracle callback');
         } else {
-          const r = await fetchRandomness(connection, round.account.randomness);
-          const state = !r.exists
-            ? 'MISSING (request account not found)'
-            : r.fulfilled
-              ? 'FULFILLED - ready to resolve'
-              : 'waiting for ORAO oracles';
-          console.log(`  randomness ${round.account.randomness.toBase58()}`);
-          console.log(`  vrf        ${state}`);
+          // `drawn`: the callback landed and wrote the draw onto the round, so
+          // there is no separate oracle account to look up any more.
+          const draw = Buffer.from(round.account.randomness);
+          console.log(`  randomness ${draw.toString('hex')}`);
+          console.log('  vrf        DRAWN - ready to resolve');
         }
       }
     } else {

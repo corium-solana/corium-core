@@ -6,7 +6,7 @@
  */
 
 import { LOCKED_ECONOMICS, PUSH_STEP } from '../../shared/chain/economics.js';
-import { fetchDrawCost } from '../../shared/chain/orao.js';
+import { fetchDrawCost } from '../../shared/chain/vrf.js';
 
 import { context, die, parseArgs, sol, stageName } from './lib';
 
@@ -60,7 +60,7 @@ async function main() {
   // falls as the batch fills.
   const draw = BigInt(await fetchDrawCost(connection));
   console.log('\n== randomness (house cost, not a player fee) ==');
-  console.log(`one draw           ${sol(draw)} at ORAO's current price`);
+  console.log(`one draw           ${sol(draw)}, the MagicBlock VRF request fee`);
   console.log(`  shared by 4      ${sol(draw / 4n)} per push`);
   console.log(`  shared by 24     ${sol(draw / 24n)} per push`);
   console.log(

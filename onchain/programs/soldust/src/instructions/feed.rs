@@ -1,7 +1,7 @@
 //! Nursery feed: one signature, instant settle, no VRF.
 //!
 //! A hole ticket is just SOL in and a share written. There is nothing to
-//! roll, so we never open an ORAO account. Oversize clips to leftover room;
+//! roll, so no draw is ever requested for it. Oversize clips to leftover room;
 //! a full nursery fails before any transfer.
 //!
 //! Feeding cannot kill the star, which is what keeps the two books apart: a

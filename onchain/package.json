@@ -21,8 +21,6 @@
     "withdraw-fees": "tsx scripts/withdraw-fees.ts",
     "selftest": "tsx scripts/selftest.ts",
     "rpc-budget": "tsx scripts/rpc-budget-check.mjs",
-    "measure-orao": "tsx scripts/measure-orao.ts",
-    "measure-orao-tx": "tsx scripts/measure-orao-tx.ts",
     "watch": "tsx scripts/watch.ts",
     "rpc-proxy": "tsx scripts/rpc-proxy.ts",
     "verify-build": "bash scripts/verify-build.sh",

@@ -29,7 +29,6 @@ import {
   mustFail,
   newPlayer,
   novaPpb,
-  oraoFulfill,
   pushStatus,
   requestPush,
   resolvePush,
@@ -39,6 +38,7 @@ import {
   showStar,
   sol,
   statusName,
+  vrfFulfill,
   waitOutWindow,
   FEED_MASS,
 } from '../lib';
@@ -56,11 +56,11 @@ async function main() {
   const pAlice = await requestPush(w, 1, STAKE, alice);
   const roundA = pAlice.roundId;
   await waitOutWindow(w, 1, roundA);
-  const { request } = await drawRound(w, 1, roundA, treasury);
+  const { seed } = await drawRound(w, 1, roundA);
   const threshold = novaPpb(STAKE, FEED_MASS + STAKE);
   const draw = grindRoll(pAlice.pushId, threshold);
   say(`alice's roll will be ${rollFor(draw, pAlice.pushId)} ppb against ${threshold} ppb - lethal`);
-  await oraoFulfill(w, request, draw);
+  await vrfFulfill(w, 1, roundA, seed, draw);
 
   act('round B opens behind her, with more than enough stake to pay for a draw');
   const bob = await newPlayer(w);
@@ -78,9 +78,7 @@ async function main() {
   const open = await showRound(w, 1, roundB);
   assert(statusName(open.status) === 'open', 'round B is still Open and past its window');
   const cfgBefore: any = await w.program.account.config.fetch(w.config);
-  const code = await mustFail('draw_round on a finished star', () =>
-    drawRound(w, 1, roundB, treasury)
-  );
+  const code = await mustFail('draw_round on a finished star', () => drawRound(w, 1, roundB));
   assert(code === 'StarNotAlive', 'refused with StarNotAlive');
 
   act('nothing was spent, and bob did not have to wait for a draw to get out');
@@ -97,7 +95,7 @@ async function main() {
   const stillOpen: any = await w.program.account.round.fetch(w.round(1, roundB));
   assert(
     Buffer.from(stillOpen.seed).every((b) => b === 0),
-    'round B never got a seed, so no ORAO request was ever made for it'
+    'round B never committed a seed, so no request was ever filed for it'
   );
 
   act('and its rent still comes back, even though it never drew');

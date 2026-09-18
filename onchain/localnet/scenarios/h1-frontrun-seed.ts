@@ -1,23 +1,30 @@
 /**
- * H-1 (fixed) - squatting a round's ORAO address can no longer block its draw.
+ * H-1 - nobody but soldust can buy a draw for a soldust round.
  *
- * The bug: `close_round` published `round.seed` and `round.randomness` on chain in
- * a *separate transaction* from `request_round_vrf`. Between the two, the address
- * the round had committed to was public knowledge and ORAO's `request_v2` is
- * permissionless, so a stranger could occupy that address first - after which
- * `request_round_vrf` failed its emptiness pre-check forever and the round could
- * never become `Requested`. Escrow was safe (the round expired into refunds) but
- * a star under this attack could never settle a single push, for about 0.0005 SOL
- * net per round blocked.
+ * The bug: `close_round` published `round.seed` and `round.randomness` on chain
+ * in a *separate transaction* from `request_round_vrf`. Between the two, the
+ * address the round had committed to was public knowledge and ORAO's
+ * `request_v2` was permissionless, so a stranger could occupy that address
+ * first - after which `request_round_vrf` failed its emptiness pre-check
+ * forever and the round could never become `Requested`. Escrow was safe (the
+ * round expired into refunds) but a star under this attack could never settle a
+ * single push, for about 0.0005 SOL net per round blocked.
  *
- * The fix merges the two into `draw_round`, so the seed is decided and spent in
- * one transaction. This scenario proves the three things that follow from that:
+ * The fix merged the two into `draw_round`, so the seed is decided and spent in
+ * one transaction, and that part still holds - acts 1 and 2 below.
  *
- *  1. There is no sealed-but-undrawn state left to read a seed out of.
- *  2. A squatter who somehow guesses the address only costs the crank a reverted
- *     transaction - the round is still open.
- *  3. Retrying with a different slot hash lands a different address, so the round
- *     draws and settles normally.
+ * The rest of the original scenario is no longer constructible, and by a much
+ * stronger argument than the fix gave us. Under ORAO the defence was that the
+ * squatter could not *guess* the address, because the seed was chosen and spent
+ * atomically. Under MagicBlock there is no address to squat, and filing a
+ * request at all requires signing for `PDA(["identity"], soldust)` - a key only
+ * soldust can produce. The permissionless request that made H-1 possible simply
+ * does not exist.
+ *
+ * So the squatting acts are replaced by the thing that supersedes them: a
+ * stranger attempting, three ways, to file a request naming soldust as its
+ * callback. That gate is worth testing directly, because it is also what stops
+ * an outsider aiming a draw at a round of their choosing.
  */
 
 import { Keypair, LAMPORTS_PER_SOL } from '@solana/web3.js';
@@ -33,104 +40,96 @@ import {
   head,
   mustFail,
   newPlayer,
-  oraoFulfill,
-  oraoRequestDirect,
   pushStatus,
-  recentSlotHash,
   requestPush,
   resolvePush,
-  roundSeed,
   say,
   showRound,
   sol,
+  stakeNeededForDraw,
   statusName,
+  vrfFulfill,
+  vrfRequestDirect,
   waitOutWindow,
 } from '../lib';
 
-const STAKE = 80_000_000;
-
 async function main() {
-  head('H-1: a squatted ORAO address costs the crank one transaction, not the star');
+  head('H-1: only soldust can buy a draw for a soldust round');
   const w = await connect();
   const treasury = Keypair.generate().publicKey;
   await bootstrap(w, treasury);
 
-  act('a player queues and the round becomes drawable');
+  const need = await stakeNeededForDraw(w);
+  act('a player queues, and the round sits open with nothing published to front-run');
   const alice = await newPlayer(w);
-  const p = await requestPush(w, 1, STAKE, alice);
-  const roundId = p.roundId;
-  await waitOutWindow(w, 1, roundId);
+  const p = await requestPush(w, 1, need, alice);
+  const open = await showRound(w, 1, p.roundId);
 
-  act('there is no state to read a seed out of before it is spent');
-  const open: any = await w.program.account.round.fetch(w.round(1, roundId));
-  assert(statusName(open.status) === 'open', 'the round is Open, and there is no state after it but Requested');
+  // The first half of the original fix, unchanged: there is no intermediate
+  // state in which a seed is public but the draw has not been bought.
+  assert(statusName(open.status) === 'open', 'the round is Open');
   assert(
     Buffer.from(open.seed).every((b) => b === 0),
-    'round.seed is still zero - nothing is committed until the draw is bought'
+    'and carries no seed at all - there is no sealed-but-undrawn state to read'
   );
   assert(
-    !('closed' in (open.status ?? {})),
-    'RoundStatus has no sealed-but-undrawn variant at all'
+    Buffer.from(open.randomness).every((b) => b === 0),
+    'and no draw'
   );
 
-  act('a griefer guesses the crank\'s next address and takes it first');
-  // Standing where the attacker cannot: deriving the address the crank is about
-  // to use, from the crank's own wallet and the slot hash it is about to pick.
-  // On chain this is a same-slot race; here it is handed to them for free, which
-  // is the strongest version of the attack.
-  const recent = await recentSlotHash(w);
-  const seed = roundSeed(1, roundId, open.entropy, recent.slot, recent.hash, w.payer.publicKey);
-  const squatted = w.oraoRequest(seed);
-  const griefer = await newPlayer(w);
-  const gBefore = await w.connection.getBalance(griefer.publicKey);
-  await oraoRequestDirect(w, griefer, seed, treasury);
-  const gAfter = await w.connection.getBalance(griefer.publicKey);
-  say(`the griefer paid ${sol(gBefore - gAfter)} to occupy ${squatted.toBase58()}`);
+  await waitOutWindow(w, 1, p.roundId);
 
-  act('the crank\'s attempt reverts - and that is the whole of the damage');
-  const code = await mustFail('draw_round onto the squatted address', () =>
-    drawRound(w, 1, roundId, treasury, { seedSlot: recent.slot, slotHash: recent.hash })
+  // ------------------------------------------------- the gate that replaced it
+  act('a stranger tries to file a request naming soldust as the callback');
+  const griefer = await newPlayer(w, 5 * LAMPORTS_PER_SOL);
+  const before = await w.connection.getBalance(griefer.publicKey);
+
+  // Presented without a signature at all.
+  const unsigned = await mustFail("soldust's identity, not signed", () =>
+    vrfRequestDirect(w, griefer)
   );
-  assert(code === 'VrfAlreadyRequested', 'refused with VrfAlreadyRequested, as it should');
-  const still: any = await w.program.account.round.fetch(w.round(1, roundId));
-  assert(statusName(still.status) === 'open', 'the round is untouched and still Open');
   assert(
-    Buffer.from(still.seed).every((b) => b === 0),
-    'no seed was committed, so nothing is now pinned to an address the griefer owns'
+    unsigned === 'MissingRequiredSignature',
+    `an unsigned identity is refused (${unsigned})`
   );
 
-  act('the very next attempt uses a fresh slot hash, which is a fresh address');
-  let drew: Awaited<ReturnType<typeof drawRound>> | null = null;
-  for (let i = 0; i < 40; i++) {
-    const next = await recentSlotHash(w);
-    if (next.slot === recent.slot) {
-      await new Promise((r) => setTimeout(r, 200));
-      continue;
-    }
-    drew = await drawRound(w, 1, roundId, treasury);
-    break;
-  }
-  if (!drew) throw new Error('the validator never advanced a slot');
-  assert(!drew.request.equals(squatted), 'the round drew at a different address entirely');
-  say(`round #${roundId} drew at ${drew.request.toBase58()} (seed slot ${drew.seedSlot})`);
-  const sealed = await showRound(w, 1, roundId);
-  assert(statusName(sealed.status) === 'requested', 'the round is Requested - the star is not blocked');
+  // Presented as a key the stranger does hold, which is the best they can do -
+  // and it does not derive from soldust, so the VRF program rejects it.
+  const impostor = Keypair.generate();
+  const wrongKey = await mustFail('a key the stranger actually holds', () =>
+    vrfRequestDirect(w, griefer, { sign: impostor })
+  );
+  assert(
+    wrongKey === 'InvalidSeeds',
+    `an identity that does not derive from soldust is refused (${wrongKey})`
+  );
 
-  act('and it settles for real');
-  await oraoFulfill(w, drew.request);
+  // Both attempts die in simulation, so they never even reach a block - the
+  // stranger cannot buy a draw, and cannot spend soldust's money trying.
+  const spent = before - (await w.connection.getBalance(griefer.publicKey));
+  say(`the stranger is out ${sol(spent)} and has achieved nothing`);
+  assert(spent < REQUEST_FEE, 'and never paid a request fee');
+
+  act('the round is untouched, so the crank draws it normally');
+  const stillOpen = await showRound(w, 1, p.roundId);
+  assert(statusName(stillOpen.status) === 'open', 'the round never left Open');
+
+  const { seed } = await drawRound(w, 1, p.roundId);
+  const sealed = await showRound(w, 1, p.roundId);
+  assert(statusName(sealed.status) === 'requested', 'and seals on the first attempt');
+  assert(
+    Buffer.from(sealed.seed).equals(seed),
+    'committing the seed the crank derived'
+  );
+
+  act('the oracle answers and the push settles');
+  await vrfFulfill(w, 1, p.roundId, seed);
   await resolvePush(w, p);
   const status = await pushStatus(w, p);
-  assert(status === 'survived' || status === 'killed', `alice settled (${status}), not refunded`);
+  assert(status !== 'pending', `the push settled (status=${status})`);
 
-  act('price what is left of the attack');
-  const occupied = await w.connection.getAccountInfo(squatted);
-  say(`the griefer spent ${sol(gBefore - gAfter)} gross, ${sol(REQUEST_FEE)} of it irrecoverable`);
-  say(`  and is left holding ${sol(occupied!.lamports)} in an account nothing reads`);
-  say('to block one round they must now win a same-slot race against a transaction');
-  say('  that has not been broadcast yet, and win it again on every retry');
-  say('a crank that signs with a fresh keypair per draw is not guessable at all,');
-  say('  because the signer is one of the seed inputs');
-
+  const cfg: any = await w.program.account.config.fetch(w.config);
+  assert(Number(cfg.pendingLiability) === 0, 'and no escrow is left behind');
   process.exit(conclude('H-1'));
 }
 

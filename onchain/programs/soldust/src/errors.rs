@@ -47,26 +47,17 @@ pub enum SoldustError {
     #[msg("The supplied player account does not own this push")]
     PushPlayerMismatch,
 
-    #[msg("The supplied randomness account does not match the push")]
-    RandomnessAccountMismatch,
-
-    #[msg("Randomness has not been fulfilled yet; retry later")]
+    #[msg("This round's draw has not arrived yet; retry later")]
     RandomnessNotReady,
-
-    #[msg("The randomness account is not owned by the VRF program")]
-    InvalidVrfAccountOwner,
-
-    #[msg("The randomness account layout could not be parsed")]
-    MalformedVrfAccount,
-
-    #[msg("The randomness account seed does not match the push seed")]
-    RandomnessSeedMismatch,
 
     #[msg("Incorrect VRF program supplied")]
     InvalidVrfProgram,
 
-    #[msg("Incorrect ORAO network state account supplied")]
-    InvalidVrfNetworkState,
+    #[msg("Incorrect VRF oracle queue supplied")]
+    InvalidVrfQueue,
+
+    #[msg("The draw was not signed by the VRF program's callback identity")]
+    InvalidVrfCallbackIdentity,
 
     #[msg("Only the star killer may claim this prize")]
     NotStarKiller,
@@ -148,7 +139,11 @@ pub enum SoldustError {
     // Appended rather than filed with the errors they belong beside so no
     // existing error code moved: Anchor numbers these by position, and clients
     // match on them.
-    #[msg("That is not the treasury ORAO's own network state names")]
+    /// Retired with the ORAO adapter, which pinned the oracle's fee treasury by
+    /// reading it out of ORAO's network state. MagicBlock takes its fee into a
+    /// queue this program pins directly, so nothing raises this any more. The
+    /// variant stays because removing it would renumber every error below it.
+    #[msg("Retired: this program no longer reads an oracle-declared treasury")]
     InvalidVrfTreasury,
 
     #[msg("That would leave nothing to buy randomness with; the treasury must sign to take the float")]
@@ -159,4 +154,7 @@ pub enum SoldustError {
 
     #[msg("Settle or refund every pending push before collapsing this star")]
     StarQueueNotEmpty,
+
+    #[msg("The oracle delivered an all-zero draw, which is indistinguishable from no draw")]
+    ZeroRandomness,
 }

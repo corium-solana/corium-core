@@ -4,7 +4,8 @@
 //! treasury frozen at initialize, and it is also the float `draw_round`
 //! reimburses cranks for randomness out of. That is deliberate: the house pays
 //! for the oracle out of its own take, so a player's stake is never exposed to
-//! what ORAO charges, and the two flows net against each other automatically.
+//! what the oracle charges, and the two flows net against each other
+//! automatically.
 //!
 //! It is also why the withdrawal is permissionless only down to
 //! [`DRAW_FLOAT_FLOOR`](crate::constants::DRAW_FLOAT_FLOOR). Collecting revenue

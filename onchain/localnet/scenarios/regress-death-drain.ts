@@ -27,7 +27,6 @@ import {
   mustFail,
   newPlayer,
   novaPpb,
-  oraoFulfill,
   pushStatus,
   requestPush,
   resolvePush,
@@ -36,6 +35,7 @@ import {
   showStar,
   sol,
   statusName,
+  vrfFulfill,
   waitOutWindow,
   FEED_MASS,
 } from '../lib';
@@ -62,13 +62,13 @@ async function main() {
 
   act('seal, buy the draw, and grind a draw that kills the star on the first push');
   await waitOutWindow(w, 1, roundId);
-  const { request } = await drawRound(w, 1, roundId, treasury);
+  const { seed } = await drawRound(w, 1, roundId);
 
   const threshold = novaPpb(STAKE, FEED_MASS + STAKE);
   const draw = grindRoll(pAlice.pushId, threshold);
   say(`alice's threshold is ${threshold} ppb (${(threshold / 1e7).toFixed(2)}%)`);
   say(`ground a draw where her roll is ${rollFor(draw, pAlice.pushId)} ppb - lethal`);
-  await oraoFulfill(w, request, draw);
+  await vrfFulfill(w, 1, roundId, seed, draw);
 
   act('alice settles and takes the star with her');
   await resolvePush(w, pAlice);

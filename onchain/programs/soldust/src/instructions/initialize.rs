@@ -40,8 +40,9 @@ const PD_OFF_AUTHORITY: usize = 13;
 const PD_LEN: usize = 45;
 
 /// This program's current upgrade authority, or `None` if it is already
-/// immutable. Parsed by hand for the same reason the ORAO accounts are: it is a
-/// handful of fixed offsets and cheaper than pulling in a deserializer.
+/// immutable. Parsed by hand because it is a handful of fixed offsets and
+/// cheaper than pulling in a deserializer for a loader account whose layout is
+/// fixed by the runtime.
 fn upgrade_authority(program_data: &AccountInfo) -> Result<Option<Pubkey>> {
     require_keys_eq!(
         *program_data.owner,

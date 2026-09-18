@@ -56,7 +56,7 @@ pub struct PushRequested {
     pub chance_ppb: u32,
 }
 
-/// A round was sealed and its ORAO seed fixed. Emitted by `close_round`.
+/// A round was sealed and its VRF seed fixed. Emitted by `draw_round`.
 ///
 /// Everything needed to verify the seed independently is here: the sampled slot
 /// is named, and the members' contributions are in their `PushRequested`
@@ -69,8 +69,6 @@ pub struct RoundClosed {
     pub seed: [u8; 32],
     /// The slot whose hash went into `seed`.
     pub seed_slot: u64,
-    /// ORAO randomness account to watch for fulfillment.
-    pub randomness: Pubkey,
     pub member_count: u64,
     pub first_push_id: u64,
     /// Total stake behind the draw, and the rake it will yield. Published so the
@@ -87,17 +85,17 @@ pub struct RoundClosed {
 }
 
 /// The one draw for a whole round was bought. Emitted by `draw_round`, the only
-/// place the protocol pays ORAO.
+/// place the protocol pays the oracle.
 #[event]
 pub struct RoundRequested {
     pub star_id: u64,
     pub round_id: u64,
     pub round: Pubkey,
-    /// Whoever fronted ORAO and was reimbursed.
+    /// Whoever fronted the request fee and was reimbursed.
     pub payer: Pubkey,
-    pub randomness: Pubkey,
-    /// What the request cost after the rent ORAO returns on fulfill. Measured
-    /// across the CPI, not assumed.
+    /// What the request actually cost, measured as the payer's balance delta
+    /// across the CPI rather than assumed. There is no per-request account to
+    /// get rent back from, so this is the whole of it.
     pub cost: u64,
     /// What the rake could actually cover. Below `cost` only when the protocol
     /// balance is short, in which case `payer` absorbed the difference.
@@ -106,6 +104,31 @@ pub struct RoundRequested {
     /// `cost / member_count`: what randomness worked out at per push.
     pub cost_per_member: u64,
     pub requested_slot: u64,
+}
+
+/// The oracle answered and its draw is now on the round. Emitted by
+/// `consume_randomness`, which the VRF program invokes.
+///
+/// This is the signal a crank waits on before resolving a round's members, and
+/// the public record of the draw itself: `randomness` here, widened to 64 bytes,
+/// is what every member's roll is derived from, so anyone can replay
+/// `sha256("soldust:roll" || randomness || push_id)` and check their own
+/// outcome.
+#[event]
+pub struct RoundDrawn {
+    pub star_id: u64,
+    pub round_id: u64,
+    pub round: Pubkey,
+    /// The seed this draw answers, as published in `RoundClosed`.
+    pub seed: [u8; 32],
+    /// The oracle's 32-byte output. Right-padded to 64 before it reaches the
+    /// roll; see `vrf::widen`.
+    pub randomness: [u8; 32],
+    pub member_count: u64,
+    pub first_push_id: u64,
+    pub requested_slot: u64,
+    pub drawn_slot: u64,
+    pub drawn_ts: i64,
 }
 
 /// A round stalled and was voided. Emitted by `expire_round`. Every member is

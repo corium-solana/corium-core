@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Boot a local validator with soldust and a mock ORAO VRF loaded at their real
-# mainnet addresses. Placing a program at an address we hold no keypair for is
-# the only way to stand in for ORAO, whose id soldust hardcodes.
+# Boot a local validator with soldust and a mock MagicBlock VRF loaded at their
+# real mainnet addresses. Placing a program at an address we hold no keypair for
+# is the only way to stand in for MagicBlock, whose id soldust hardcodes - and
+# it matters twice over here, because the callback identity soldust checks is a
+# PDA derived *underneath* that id, so only a mock sitting at the real address
+# can produce a signature soldust will accept.
 #
 # soldust goes in via --upgradeable-program so it gets a real ProgramData account
 # with a real upgrade authority. That is not cosmetic: `initialize` requires the
@@ -12,6 +15,10 @@
 # The authority is a local keypair the scenarios sign with. Generated here if
 # missing; gitignored. Not the program identity.
 #
+# The VRF queue is pre-loaded at its pinned mainnet address, owned by the mock,
+# because the mock stores its requests there exactly as the real program does -
+# and a PDA of the real program cannot be created by a stand-in for it.
+#
 # --ticks-per-slot 8 shortens a slot from ~400ms to ~50ms. ROUND_EXPIRY_SLOTS is
 # 750, so this turns every expiry wait in the scenarios from five minutes into
 # about forty seconds.
@@ -21,7 +28,13 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ONCHAIN="$(dirname "$HERE")"
 
 SOLDUST_ID=CoriumcqGZW3cdnAiyWz6jHHveMUmdrw9RC1KXfMsF8S
-ORAO_ID=VRFzZoJdhFWL8rkvu87LpKM3RbcVezpMEc6X5GVDr7y
+VRF_ID=Vrf1RNUjXmQGjmQrQLvJHs9SNkvDJEsRVFPkfSQUwGz
+
+MOCK_VRF="$HERE/mock-magicblock-vrf/out/mock_magicblock_vrf.so"
+if [[ ! -f "$MOCK_VRF" ]]; then
+  echo "building the mock VRF program" >&2
+  (cd "$HERE/mock-magicblock-vrf" && cargo build-sbf --sbf-out-dir out) >&2
+fi
 
 DEPLOYER="$HERE/deployer.json"
 if [[ ! -f "$DEPLOYER" ]]; then
@@ -40,7 +53,8 @@ exec solana-test-validator \
   --quiet \
   --ledger "$HERE/.ledger" \
   --upgradeable-program "$SOLDUST_ID" "$SOLDUST_SO" "$(solana-keygen pubkey "$DEPLOYER")" \
-  --bpf-program "$ORAO_ID" "$HERE/mock-orao-vrf/out/mock_orao_vrf.so" \
+  --bpf-program "$VRF_ID" "$MOCK_VRF" \
+  --account Cuj97ggrhhidhbu39TijNVqE74xvKJ69gDervRUXAxGh "$HERE/vrf-queue.json" \
   --ticks-per-slot 8 \
   --faucet-sol 1000000 \
   --limit-ledger-size 100000000 \

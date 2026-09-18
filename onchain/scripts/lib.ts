@@ -52,9 +52,18 @@ export const STAGE_NAMES = [
   'EVENT HORIZON',
 ];
 
-export const ORAO_VRF_PROGRAM_ID = new PublicKey(
-  'VRFzZoJdhFWL8rkvu87LpKM3RbcVezpMEc6X5GVDr7y'
+/** MagicBlock `ephemeral-vrf`. Same address on devnet and mainnet-beta. */
+export const VRF_PROGRAM_ID = new PublicKey(
+  'Vrf1RNUjXmQGjmQrQLvJHs9SNkvDJEsRVFPkfSQUwGz'
 );
+
+/** Mirrors `vrf::VRF_QUEUE`, which the program pins. */
+export const VRF_QUEUE = new PublicKey(
+  'Cuj97ggrhhidhbu39TijNVqE74xvKJ69gDervRUXAxGh'
+);
+
+/** Mirrors `vrf::VRF_REQUEST_FEE`: the whole cost of a draw. */
+export const DRAW_COST = 500_000;
 
 const CONFIG_SEED = Buffer.from('config');
 const VAULT_SEED = Buffer.from('vault');
@@ -64,8 +73,7 @@ const ROUND_SEED = Buffer.from('round');
 const PLAYER_SEED = Buffer.from('player');
 const FEED_SEED = Buffer.from('feed');
 const FEED_SHARE_SEED = Buffer.from('feed-share');
-const ORAO_RANDOMNESS_SEED = Buffer.from('orao-vrf-randomness-request');
-const ORAO_NETWORK_SEED = Buffer.from('orao-vrf-network-configuration');
+const VRF_IDENTITY_SEED = Buffer.from('identity');
 
 // ------------------------------------------------------------------ helpers
 
@@ -304,9 +312,9 @@ export const SLOT_HASHES = new PublicKey('SysvarS1otHashes1111111111111111111111
  * Must match `vrf::round_seed` on chain: `sha256("soldust:round" || star_id_le ||
  * round_id_le || entropy || slot_le || slot_hash || cranker)`.
  *
- * Whoever calls `draw_round` needs this *before* sending, because the ORAO account
- * address follows from the seed. Afterwards the seed is on the round account, so
- * reading it back is both easier and authoritative.
+ * Whoever calls `draw_round` derives this to pass the matching `seed_slot`.
+ * Afterwards the seed is on the round account, so reading it back is both easier
+ * and authoritative.
  */
 export function roundSeed(
   starId: bigint | number | BN,
@@ -345,88 +353,51 @@ export async function recentSlotHash(
   return { slot: info.data.readBigUInt64LE(8), hash: info.data.subarray(16, 48) };
 }
 
-/** Must match `vrf::roll_for`: `sha256("soldust:roll" || randomness || push_id_le)`. */
+/**
+ * Must match `vrf::roll_for`: `sha256("soldust:roll" || randomness || push_id_le)`.
+ *
+ * Defined over the 64-byte form, so a 32-byte oracle output goes through
+ * `widen` first. Done here rather than left to callers, so nothing can quietly
+ * roll against a short input and get an answer the chain disagrees with.
+ */
 export function rollFor(randomness: Uint8Array, pushId: bigint | number | BN): number {
   const digest = sha256(
-    Buffer.concat([Buffer.from('soldust:roll'), Buffer.from(randomness), u64le(pushId)])
+    Buffer.concat([Buffer.from('soldust:roll'), widen(randomness), u64le(pushId)])
   );
   let acc = 0n;
   for (let i = 15; i >= 0; i--) acc = (acc << 8n) | BigInt(digest[i]);
   return Number(acc % 1_000_000_000n);
 }
 
-export function randomnessPda(seed: Buffer): PublicKey {
-  return PublicKey.findProgramAddressSync(
-    [ORAO_RANDOMNESS_SEED, seed],
-    ORAO_VRF_PROGRAM_ID
-  )[0];
-}
-
-export function oraoNetworkStatePda(): PublicKey {
-  return PublicKey.findProgramAddressSync(
-    [ORAO_NETWORK_SEED],
-    ORAO_VRF_PROGRAM_ID
-  )[0];
-}
-
-// ----------------------------------------------------------------- ORAO reads
-
-export interface OraoNetwork {
-  networkState: PublicKey;
-  authority: PublicKey;
-  treasury: PublicKey;
-  requestFee: bigint;
+/**
+ * This program's VRF request identity: `PDA(["identity"], soldust)`. Signed by
+ * the program during `draw_round`; never created as an account.
+ */
+export function vrfIdentityPda(programId: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync([VRF_IDENTITY_SEED], programId)[0];
 }
 
 /**
- * ORAO's `NetworkState` layout:
- * `8 disc | authority 32 | treasury 32 | request_fee u64 | ...`
+ * The identity the VRF program signs callbacks into us with:
+ * `PDA(["identity", soldust], vrf)`. Mirrors `vrf::callback_identity`.
  */
-export async function fetchOraoNetwork(
-  connection: Connection
-): Promise<OraoNetwork> {
-  const networkState = oraoNetworkStatePda();
-  const info = await connection.getAccountInfo(networkState);
-  if (!info) {
-    throw new Error(
-      `ORAO network state ${networkState.toBase58()} not found. Are you on devnet or mainnet? ORAO is not deployed on localnet.`
-    );
-  }
-  const d = info.data;
-  return {
-    networkState,
-    authority: new PublicKey(d.subarray(8, 40)),
-    treasury: new PublicKey(d.subarray(40, 72)),
-    requestFee: d.readBigUInt64LE(72),
-  };
-}
-
-export interface RandomnessState {
-  exists: boolean;
-  fulfilled: boolean;
-  seed?: Buffer;
-  randomness?: Buffer;
+export function vrfCallbackIdentityPda(programId: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [VRF_IDENTITY_SEED, programId.toBuffer()],
+    VRF_PROGRAM_ID
+  )[0];
 }
 
 /**
- * ORAO's `RandomnessV2` layout when fulfilled:
- * `8 disc | tag 1 | client 32 | seed 32 | randomness 64`
+ * Widen a 32-byte oracle output to the 64 bytes `rollFor` is defined over.
+ * Mirrors `vrf::widen`. Anything already 64 bytes passes through, so draws
+ * recorded under the old ORAO integration still replay.
  */
-export async function fetchRandomness(
-  connection: Connection,
-  address: PublicKey
-): Promise<RandomnessState> {
-  const info = await connection.getAccountInfo(address);
-  if (!info) return { exists: false, fulfilled: false };
-  const d = info.data;
-  if (d.length < 9) return { exists: true, fulfilled: false };
-  if (d[8] !== 1) return { exists: true, fulfilled: false };
-  return {
-    exists: true,
-    fulfilled: true,
-    seed: Buffer.from(d.subarray(41, 73)),
-    randomness: Buffer.from(d.subarray(73, 137)),
-  };
+export function widen(randomness: Uint8Array | Buffer): Buffer {
+  if (randomness.length === 64) return Buffer.from(randomness);
+  const wide = Buffer.alloc(64);
+  Buffer.from(randomness).copy(wide, 0, 0, 32);
+  return wide;
 }
 
 // --------------------------------------------------------------- convenience

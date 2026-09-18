@@ -14,21 +14,24 @@ import * as crypto from 'crypto';
 import {
   BN,
   Keypair,
-  ORAO_VRF_PROGRAM_ID,
   PublicKey,
+  SLOT_HASHES,
   SystemProgram,
+  VRF_PROGRAM_ID,
+  VRF_QUEUE,
   configPda,
   feedPda,
   feedSharePda,
-  oraoNetworkStatePda,
   playerPda,
   pushPda,
-  randomnessPda,
   rollFor,
   roundPda,
   roundSeed,
   starPda,
   vaultPda,
+  vrfCallbackIdentityPda,
+  vrfIdentityPda,
+  widen,
 } from './lib';
 import { LOCKED_ECONOMICS, PUSH_STEP } from '../../shared/chain/economics.js';
 
@@ -86,6 +89,24 @@ async function main() {
   );
   check('roll derivation matches Rust', rollFor(Buffer.alloc(64, 3), 7) === ROLL_VECTOR);
 
+  // The oracle swap must not have moved the roll. `rollFor` is still defined
+  // over 64 bytes and its vector is unchanged; what is new is that a 32-byte
+  // MagicBlock output reaches it through `widen`, which right-pads with zeros.
+  check(
+    'widen right-pads a 32-byte draw and nothing more',
+    widen(Buffer.alloc(32, 9)).equals(
+      Buffer.concat([Buffer.alloc(32, 9), Buffer.alloc(32, 0)])
+    )
+  );
+  check(
+    'widen passes a 64-byte draw through untouched',
+    widen(Buffer.alloc(64, 3)).equals(Buffer.alloc(64, 3))
+  );
+  check(
+    'rolling a widened draw agrees with rolling it wide',
+    rollFor(Buffer.alloc(32, 9), 7) === rollFor(widen(Buffer.alloc(32, 9)), 7)
+  );
+
   // 314 bps of one push step has to be a whole number of lamports, or `split`
   // rounds and the prize pool stops being exactly prize_bps of mass.
   check(
@@ -101,8 +122,8 @@ async function main() {
   );
 
   const idlNames = program.idl.instructions.map((i: any) => i.name).sort();
-  check('IDL exposes all 14 instructions', idlNames.length === 14, idlNames.join(', '));
-  check('IDL exposes all 14 events', (program.idl.events ?? []).length === 14);
+  check('IDL exposes all 16 instructions', idlNames.length === 16, idlNames.join(', '));
+  check('IDL exposes all 17 events', (program.idl.events ?? []).length === 17);
 
   // PDAs
   const config = configPda(programId);
@@ -113,13 +134,13 @@ async function main() {
   console.log(`vault    ${vault.toBase58()}`);
   console.log(`star #1  ${star.toBase58()}`);
   console.log(`round #0 ${round.toBase58()}`);
-  console.log(`orao ns  ${oraoNetworkStatePda().toBase58()}\n`);
+  console.log(`vrf id   ${vrfIdentityPda(programId).toBase58()}  (we sign)`);
+  console.log(`vrf cb   ${vrfCallbackIdentityPda(programId).toBase58()}  (vrf signs)\n`);
 
   // Encode every instruction we actually use, without sending.
   const player = Keypair.generate().publicKey;
   const clientSeed = crypto.randomBytes(32);
   const push = pushPda(programId, player, clientSeed);
-  const drawSeed = roundSeed(1, 0, entropy, 300, Buffer.alloc(32, 2), player);
 
   try {
     const ix = await program.methods
@@ -171,16 +192,44 @@ async function main() {
         star,
         round,
         slotHashes: SLOT_HASHES,
-        vrfProgram: ORAO_VRF_PROGRAM_ID,
-        vrfNetworkState: oraoNetworkStatePda(),
-        vrfTreasury: PublicKey.default,
-        vrfRequest: randomnessPda(drawSeed),
+        vrfProgram: VRF_PROGRAM_ID,
+        vrfIdentity: vrfIdentityPda(programId),
+        vrfQueue: VRF_QUEUE,
         systemProgram: SystemProgram.programId,
       })
       .instruction();
-    check('draw_round encodes', ix.keys.length === 11, `${ix.data.length} bytes of data`);
+    check('draw_round encodes', ix.keys.length === 10, `${ix.data.length} bytes of data`);
   } catch (e: any) {
     check('draw_round encodes', false, e.message);
+  }
+
+  // The callback. Never built by us in practice - the VRF program constructs it
+  // after verifying an oracle's proof - but encoding it here pins the account
+  // order and the argument shape, which is exactly what a mismatch would break
+  // silently on chain.
+  try {
+    const ix = await program.methods
+      .consumeRandomness(Array.from(Buffer.alloc(32, 7)))
+      .accountsPartial({
+        vrfIdentity: vrfCallbackIdentityPda(programId),
+        round,
+      })
+      .instruction();
+    check(
+      'consume_randomness encodes',
+      ix.keys.length === 2 && ix.data.length === 40,
+      `${ix.data.length} bytes of data`
+    );
+    check(
+      'consume_randomness account 0 is the VRF callback identity, signing',
+      ix.keys[0].pubkey.equals(vrfCallbackIdentityPda(programId)) && ix.keys[0].isSigner
+    );
+    check(
+      'consume_randomness account 1 is the round, writable',
+      ix.keys[1].pubkey.equals(round) && ix.keys[1].isWritable
+    );
+  } catch (e: any) {
+    check('consume_randomness encodes', false, e.message);
   }
 
   try {
@@ -205,10 +254,9 @@ async function main() {
         cranker: player,
         star,
         round,
-        vrfRequest: randomnessPda(drawSeed),
       })
       .instruction();
-    check('expire_round encodes', ix.keys.length === 4);
+    check('expire_round encodes', ix.keys.length === 3);
   } catch (e: any) {
     check('expire_round encodes', false, e.message);
   }
@@ -225,13 +273,12 @@ async function main() {
         round,
         playerStats: playerPda(programId, player),
         playerWallet: player,
-        vrfRequest: randomnessPda(drawSeed),
         starFeed: feedPda(programId, 1),
         feedShare: feedSharePda(programId, 1, player),
         systemProgram: SystemProgram.programId,
       })
       .instruction();
-    check('resolve_push encodes', ix.keys.length === 12);
+    check('resolve_push encodes', ix.keys.length === 11);
   } catch (e: any) {
     check('resolve_push encodes', false, e.message);
   }
@@ -307,28 +354,47 @@ async function main() {
       )
     );
   check(
-    'close_round samples a slot hash it cannot predict',
-    accountsOf('close_round').has('slot_hashes'),
+    'draw_round samples a slot hash it cannot predict',
+    accountsOf('draw_round').has('slot_hashes'),
     'stops a member re-rolling a sealed round'
   );
+
+  // The draw arrives by callback, so the integrity of a round's randomness rests
+  // on one thing: only the VRF program can sign `consume_randomness`. The IDL
+  // pins that address, which is the machine-checkable form of the argument.
   check(
-    'close_round moves no lamports',
-    !accountsOf('close_round').has('vault'),
-    'sealing is free and permissionless'
+    'consume_randomness is pinned to the VRF callback identity',
+    (idl.instructions
+      .find((i: any) => i.name === 'consume_randomness')
+      ?.accounts ?? []).some(
+      (a: any) =>
+        a.name === 'vrf_identity' &&
+        a.signer === true &&
+        a.address === vrfCallbackIdentityPda(programId).toBase58()
+    ),
+    'nothing else can hand a round a draw'
   );
   check(
-    'expire_round checks the draw before voiding',
-    accountsOf('expire_round').has('vrf_request'),
-    'so a void can never duck an unfavourable roll'
+    'only the callback can write a draw',
+    !accountsOf('draw_round').has('randomness') && fieldsOf('Round').has('randomness'),
+    'draw_round files the request and leaves the field zero'
+  );
+  check(
+    'a landed draw is structurally unvoidable',
+    !accountsOf('expire_round').has('vrf_request') &&
+      (idl.types
+        .find((t: any) => t.name === 'RoundStatus')
+        ?.type?.variants ?? []).some((v: any) => v.name === 'Drawn'),
+    'expire_round refuses a Drawn round on status, with no oracle account to misread'
   );
 
   // The economic gate. Sealing commits the house to buying a draw, so sealing is
-  // where the draw has to be shown to be worth buying - priced off ORAO live,
-  // never compiled in, and with the round's own stake on chain to check against.
+  // where the draw has to be shown to be worth buying, against the round's own
+  // stake recorded on chain.
   check(
-    'close_round prices the draw before committing to it',
-    accountsOf('close_round').has('vrf_network_state'),
-    'the bar tracks whatever ORAO charges'
+    'draw_round pins the queue it pays',
+    accountsOf('draw_round').has('vrf_queue'),
+    'so a cranker cannot route the fee to a queue it can close'
   );
   check(
     'a round records the stake behind its draw',
@@ -352,13 +418,13 @@ async function main() {
   );
   check(
     'request_push cannot pre-buy randomness',
-    !accountsOf('request_push').has('vrf_request'),
+    !accountsOf('request_push').has('vrf_program'),
     'the seed does not exist until the round seals'
   );
   check(
     'the house buys randomness, not the player',
-    accountsOf('request_round_vrf').has('vrf_network_state'),
-    'priced live off ORAO, charged to protocol_accrued'
+    accountsOf('draw_round').has('vrf_program') && accountsOf('draw_round').has('vault'),
+    'the cranker fronts the fee and the rake reimburses it'
   );
   check(
     'a round reports what its draw cost per member',

@@ -46,8 +46,6 @@ import {
   mustFail,
   newPlayer,
   novaPpb,
-  oraoFulfill,
-  oraoInit,
   pushStatus,
   requestPush,
   resolvePush,
@@ -56,6 +54,8 @@ import {
   sol,
   stakeNeededForDraw,
   statusName,
+  vrfFulfill,
+  vrfInit,
   waitOutWindow,
   waitUntilSlot,
   FEED_MASS,
@@ -143,7 +143,7 @@ async function main() {
   const treasury = Keypair.generate().publicKey;
 
   act('two feeders fill the nursery of star #1');
-  await oraoInit(w, treasury);
+  await vrfInit(w);
   await initialize(w, treasury);
   await fundProtocol(w, 2 * LAMPORTS_PER_SOL);
   await createFirstStar(w);
@@ -164,10 +164,12 @@ async function main() {
   const stake = await stakeNeededForDraw(w);
   const pAlice = await requestPush(w, 1, stake, alice);
   await waitOutWindow(w, 1, pAlice.roundId);
-  const drew = await drawRound(w, 1, pAlice.roundId, treasury);
-  await oraoFulfill(
+  const drew = await drawRound(w, 1, pAlice.roundId);
+  await vrfFulfill(
     w,
-    drew.request,
+    1,
+    pAlice.roundId,
+    drew.seed,
     grindSurvival([{ pushId: pAlice.pushId, thresholdPpb: novaPpb(stake, FEED_MASS + stake) }])
   );
   await resolvePush(w, pAlice);
@@ -178,12 +180,17 @@ async function main() {
     'her stake is mass now, and its prize share belongs to whoever kills the star'
   );
 
-  act('then ORAO goes dark: a draw is bought and never lands again');
+  act('then the oracle goes dark: a draw is bought and the callback never comes');
   const pBob = await requestPush(w, 1, stake, bob);
   const bobPaid = await w.connection.getBalance(bob.publicKey);
   await waitOutWindow(w, 1, pBob.roundId);
-  const orphan = await drawRound(w, 1, pBob.roundId, treasury);
-  say(`round #${pBob.roundId} is sealed and paid for; ${orphan.request.toBase58()} never fulfils`);
+  const orphan = await drawRound(w, 1, pBob.roundId);
+  const waiting: any = await w.program.account.round.fetch(w.round(1, pBob.roundId));
+  assert(
+    statusName(waiting.status) === 'requested',
+    `round #${pBob.roundId} is Requested - paid for, on the queue, and there it stays`
+  );
+  say(`its seed is ${orphan.seed.toString('hex').slice(0, 16)}..., and nothing ever answers it`);
 
   act('the star goes quiet, but a queued push still blocks the collapse');
   await waitOutStall(w, 1, STALL_SECS, 'stall window');

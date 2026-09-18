@@ -7,105 +7,101 @@
 //!   request_push ...              members join, stake accumulates, seed fixed
 //!        |
 //!        |  draw_round         window elapsed or target size reached, AND the
-//!        |                     batch's rake covers ORAO's current price.
+//!        |                     batch's rake covers the request fee.
 //!        v                     seed = H(entropy, slot_hash, cranker) and the
-//!    Requested                 one ORAO request for the batch, same transaction
+//!    Requested                 one VRF request for the batch, same transaction
 //!        |
-//!        |  ORAO fulfills off-chain
+//!        |  an oracle answers, and the VRF program calls back into
+//!        |  consume_randomness with the result
 //!        v
-//!     resolve_push x N         each member rolls H(draw, push_id)
+//!      Drawn                   the draw is now a field on the round
 //!        |
+//!        |  resolve_push x N   each member rolls H(draw, push_id)
+//!        v
 //!        |  close_round_account once every member has resolved
 //!        v
 //!     (rent back to the member who opened it)
 //! ```
 //!
-//! ## Why sealing and drawing are one transaction
+//! ## Why sealing and requesting are one transaction
 //!
-//! They used to be two, on the theory that publishing the seed before anyone paid
-//! for it removed all discretion from the purchase. The discretion argument was
-//! right and the split was still wrong, because it published the seed while the
-//! ORAO account that seed derives was still unoccupied - and that account is
-//! first-come, first-served at ORAO. Anyone could read the sealed seed, request it
-//! themselves for the price of one ORAO request, and leave the round permanently
-//! undrawable: the program refuses to adopt a randomness account it did not
-//! create (correctly - adopting one would let a griefer hand a round a draw they
-//! had already read), so the round could only ever expire. Cheap, repeatable, and
-//! it made a star unplayable for as long as the griefer kept paying.
+//! They used to be two, on the theory that publishing the seed before anyone
+//! paid for it removed all discretion from the purchase. Under the pull-based
+//! ORAO integration that split was actively dangerous: the randomness account's
+//! address was a function of the seed and first-come-first-served, so publishing
+//! a sealed seed let anyone occupy that address and leave the round permanently
+//! undrawable.
 //!
-//! Deciding the seed inside the transaction that spends it closes that window
-//! completely: there is no moment when the seed is knowable on chain and the
-//! address is still free. What remains is a same-slot race against a transaction
-//! that has not landed yet, and it is a bad one to be on the attacking side of.
-//! Winning it only *reverts* the crank's transaction - the round is still open,
-//! and the next attempt derives a different address.
+//! MagicBlock has no per-request address, so that hazard is simply gone - there
+//! is nothing to squat. The atomicity is kept anyway, because it is free and it
+//! preserves the cleaner property: the seed is decided in the very transaction
+//! that spends it, so it is never public while still unspent. Nothing to grind
+//! at either end.
 //!
 //! ## What the caller picks, and why that is safe
 //!
-//! Solana needs every account address before execution, and the ORAO address is a
-//! function of the seed, so the caller cannot let the program surprise it with a
-//! seed. It therefore names the slot whose hash goes in: `draw_round` takes
-//! `seed_slot`, looks the hash up in `SlotHashes`, and refuses anything older
-//! than [`vrf::SLOT_HASH_LOOKBACK`]. The rest of the seed is the round's own
-//! committed entropy, its ids, and the signer.
+//! `draw_round` takes `seed_slot`, looks its hash up in `SlotHashes`, and
+//! refuses anything older than [`vrf::SLOT_HASH_LOOKBACK`]. The rest of the seed
+//! is the round's own committed entropy, its ids, and the signer.
 //!
-//! That same requirement - the address has to be known before the transaction
-//! runs - is why none of those inputs may move while a draw is in flight. Every
-//! one of them is either the caller's own choice or fixed when the round opened;
-//! in particular `round.entropy` is written by the round's first member and then
-//! left alone. It used to accumulate over every arrival, which quietly made the
-//! address a function of mempool ordering: a push landing between a crank reading
-//! the round and its draw executing moved the seed, so the draw reverted on the
-//! address check. That needed no attacker, only traffic, and it got worse the
-//! busier the star was - with the batch expiring into refunds if no attempt ever
-//! won the gap. Now a late arrival simply joins the round and shares its draw.
+//! The caller naming the slot is now a convenience rather than a requirement -
+//! it is what makes the derivation replayable off-chain from public data, and
+//! what keeps the published test vectors meaningful. Either way the choice is
+//! bounded to real, already-final chain state, and choosing among known hashes
+//! buys nothing: none of them tells you what the oracle will answer.
 //!
-//! Choosing a seed is not choosing a draw. The draw does not exist until ORAO
-//! answers a request this instruction had to create from nothing, and an address
-//! that already holds an answer cannot be created - it fails the emptiness check
-//! below - so a seed whose outcome is already known can never be adopted. Which
-//! of the last 150 slot hashes was used is therefore free information, and so is
-//! the signer.
+//! `round.entropy` is still written by the round's first member and then left
+//! alone. It used to accumulate over every arrival, which made the seed a
+//! function of mempool ordering and reverted draws under mere traffic. Freezing
+//! it costs nothing and a late arrival simply joins the round and shares its
+//! draw.
 //!
-//! The signer being an input is deliberate: a griefer who wants to squat the
-//! address has to know which wallet will sign for it, so a crank that uses a
-//! fresh keypair per draw is not guessable at all. That is worth more than
-//! narrowing the caller's seed choice would be, because narrowing it only matters
-//! against an ORAO that is actively conspiring - and an ORAO that conspires can
-//! simply withhold answers until it likes a round, or lie about the randomness
-//! outright. Trusting the VRF is the trust assumption; this is not where it is
-//! won or lost.
+//! Choosing a seed is not choosing a draw. The draw does not exist until an
+//! oracle answers a request this instruction had to file from nothing, and the
+//! only way that answer reaches a round is a callback the VRF program signed
+//! for. Which of the last 150 slot hashes was used is therefore free
+//! information, and so is the signer.
+//!
+//! An oracle that conspires can withhold answers until it likes a round, or lie
+//! about the randomness outright. Trusting the VRF is the trust assumption; none
+//! of the above is where it is won or lost.
 //!
 //! ## Why a round can refuse to draw
 //!
 //! A draw costs the same whether one player or twenty are waiting on it, and the
 //! house pays for it out of its own rake. So there is a stake below which a
-//! round is not worth drawing: at 3.14% of stake against ORAO's price, one
-//! minimum push does not pay for a request, and buying one anyway would mean the
-//! float bleeds faster the more people play - the wrong sign on the whole thing.
+//! round is not worth drawing: at 3.14% of stake against a 500_000-lamport
+//! request, one minimum push still does not pay for a request, and buying one
+//! anyway would mean the float bleeds faster the more people play - the wrong
+//! sign on the whole thing.
 //!
-//! `draw_round` therefore checks the batch against the live price and, if it
-//! falls short, declines. The round stays open and keeps taking members. Nothing
-//! is stuck: the only thing that happened is that the draw was not bought yet,
-//! and [`expire_round`] still voids the round into full refunds if the stake
-//! never shows up. The house's edge is structural as a result - every draw it
-//! buys was paid for by the stake behind that draw - and the game needs no
-//! minimum bet to stay solvent, only patience on quiet stars.
+//! `draw_round` therefore checks the batch against the price and, if it falls
+//! short, declines. The round stays open and keeps taking members. Nothing is
+//! stuck: the only thing that happened is that the draw was not bought yet, and
+//! [`expire_round`] still voids the round into full refunds if the stake never
+//! shows up. The house's edge is structural as a result - every draw it buys was
+//! paid for by the stake behind that draw - and the game needs no minimum bet to
+//! stay solvent, only patience on quiet stars.
+//!
+//! Dropping ORAO cut the bar from seven minimum pushes to two, because ORAO
+//! entombed ~0.00168 SOL of unrecoverable rent in every draw on top of its fee.
+//! The gate stays regardless: it is one comparison, and it is what keeps
+//! solvency independent of a price somebody else sets and can change.
 
 use anchor_lang::prelude::*;
 
 use crate::constants::{CONFIG_SEED, ROUND_SEED, STAR_SEED, VAULT_SEED};
 use crate::errors::SoldustError;
-use crate::events::{RoundClosed, RoundExpired, RoundRequested, RoundSwept};
+use crate::events::{RoundClosed, RoundDrawn, RoundExpired, RoundRequested, RoundSwept};
 use crate::math::{add, sub};
 use crate::state::{Config, Round, RoundStatus, Star};
 use crate::{game_config, vault, vrf};
 
 // ------------------------------------------------------- sealing and drawing
 
-/// Seal a round and buy the one ORAO request that serves all of its members.
+/// Seal a round and buy the one VRF request that serves all of its members.
 ///
-/// The signer fronts ORAO and is reimbursed out of `protocol_accrued` - the
+/// The signer fronts the fee and is reimbursed out of `protocol_accrued` - the
 /// house's own rake, not anyone's stake. That is the whole economic point of
 /// batching: a draw costs the same whether one player or twenty are waiting on
 /// it, so charging it to the pot per-push made small pushes absurd while
@@ -118,7 +114,7 @@ use crate::{game_config, vault, vrf};
 /// can read `Config.protocol_accrued` first if it cares.
 #[derive(Accounts)]
 pub struct DrawRound<'info> {
-    /// Anyone. Fronts ORAO's price and is reimbursed from the rake.
+    /// Anyone. Fronts the request fee and is reimbursed from the rake.
     #[account(mut)]
     pub cranker: Signer<'info>,
 
@@ -146,25 +142,24 @@ pub struct DrawRound<'info> {
     /// `vrf::slot_hash_at`. Sampled here for seed material only.
     pub slot_hashes: UncheckedAccount<'info>,
 
-    /// CHECK: pinned to the ORAO program id.
-    #[account(address = vrf::ORAO_VRF_PROGRAM_ID @ SoldustError::InvalidVrfProgram)]
+    /// CHECK: pinned to the MagicBlock VRF program id.
+    #[account(address = vrf::MAGICBLOCK_VRF_PROGRAM_ID @ SoldustError::InvalidVrfProgram)]
     pub vrf_program: UncheckedAccount<'info>,
 
-    /// CHECK: address verified in `vrf::draw_cost_estimate` and again in the CPI
-    /// helper. Read to price the draw, then written by ORAO.
-    #[account(mut)]
-    pub vrf_network_state: UncheckedAccount<'info>,
+    /// CHECK: this program's own request identity, `PDA(["identity"], soldust)`.
+    /// Never created and holds nothing - it exists only as a signature the VRF
+    /// program checks to learn which program the callback belongs to, and
+    /// `draw_round` produces that signature with `invoke_signed`.
+    #[account(seeds = [vrf::IDENTITY_SEED], bump)]
+    pub vrf_identity: UncheckedAccount<'info>,
 
-    /// CHECK: pinned in the handler to the treasury ORAO's own network state
-    /// names, which is also what ORAO constrains it against.
-    #[account(mut)]
-    pub vrf_treasury: UncheckedAccount<'info>,
-
-    /// CHECK: created by ORAO during the CPI. Cannot be pinned by an `address`
-    /// constraint because the seed that derives it is computed in the handler;
-    /// `vrf::request_randomness` verifies it against that seed instead.
-    #[account(mut)]
-    pub vrf_request: UncheckedAccount<'info>,
+    /// CHECK: pinned to `vrf::VRF_QUEUE`, which is also where the request fee
+    /// lands. That pin protects the house's float rather than MagicBlock's:
+    /// anyone may stand up a queue of their own, so without it a cranker could
+    /// file against a queue they control, be reimbursed from the rake, and
+    /// recover the fee by closing it. See `vrf::VRF_QUEUE`.
+    #[account(mut, address = vrf::VRF_QUEUE @ SoldustError::InvalidVrfQueue)]
+    pub vrf_queue: UncheckedAccount<'info>,
 
     pub system_program: Program<'info, System>,
 }
@@ -198,16 +193,15 @@ pub fn draw_round(ctx: Context<DrawRound>, seed_slot: u64) -> Result<()> {
 
     // The economic gate. This is what commits the house to buying a draw, so
     // this is where the draw has to be shown to be worth buying: the round's own
-    // rake must cover ORAO at ORAO's current price.
+    // rake must cover the request fee.
     //
     // Failing here is not an error condition, it is the mechanism. The round
     // stays open, `star.current_round` still points at it, and later pushes keep
     // joining and adding stake until the bar is cleared. The window is therefore
     // a *minimum* wait rather than a maximum, and a quiet star batches harder
     // instead of costing the house money - which is what lets the game run
-    // unattended without the rake ever going backwards, at any push size and
-    // whatever ORAO decides to charge.
-    let draw_cost = vrf::draw_cost_estimate(&ctx.accounts.vrf_network_state)?;
+    // unattended without the rake ever going backwards, at any push size.
+    let draw_cost = vrf::draw_cost_estimate();
     let rake = ctx
         .accounts
         .round
@@ -243,52 +237,32 @@ pub fn draw_round(ctx: Context<DrawRound>, seed_slot: u64) -> Result<()> {
         &slot_hash,
         &ctx.accounts.cranker.key(),
     );
-    let randomness = vrf::randomness_address(&seed);
 
-    // A round is requested exactly once, so anything already living at that
-    // address is not ours. Refusing - rather than adopting whatever is sitting
-    // there - is what stops a griefer handing a round a draw they have already
-    // read. Reachable only by winning a same-slot race against this very
-    // transaction, and the cost of losing it is that this transaction reverts:
-    // the round stays open and the next attempt derives a different address.
-    require_keys_eq!(
-        ctx.accounts.vrf_request.key(),
-        randomness,
-        SoldustError::RandomnessAccountMismatch
-    );
-    require!(
-        ctx.accounts.vrf_request.lamports() == 0
-            && *ctx.accounts.vrf_request.owner == anchor_lang::solana_program::system_program::ID,
-        SoldustError::VrfAlreadyRequested
-    );
-
-    // The fee has to leave the cranker for good, not go round in a circle. See
-    // `vrf::require_network_treasury`: the reimbursement below is measured as the
-    // cranker's balance delta, so a fee paid into an account the cranker owns
-    // would still be charged to the rake.
-    vrf::require_network_treasury(
-        &ctx.accounts.vrf_network_state,
-        &ctx.accounts.vrf_treasury.key(),
-    )?;
-
+    // File the request, naming this round as the one account the callback may
+    // write. That binding is made here and cannot be changed afterwards, which
+    // is half of why a draw can only ever reach the round that asked for it;
+    // the other half is the identity signature `consume_randomness` checks.
+    //
     // Buy first, then price it. Measuring the signer's balance across the CPI
-    // is the only way to know what ORAO charged that cannot go stale: both the
-    // request fee and the rent rate are live cluster state.
+    // is the only way to know what was actually charged that cannot go stale -
+    // the fee is a constant in somebody else's upgradeable program.
     let before = ctx.accounts.cranker.lamports();
     vrf::request_randomness(
         &ctx.accounts.vrf_program.to_account_info(),
         &ctx.accounts.cranker.to_account_info(),
-        &ctx.accounts.vrf_network_state.to_account_info(),
-        &ctx.accounts.vrf_treasury.to_account_info(),
-        &ctx.accounts.vrf_request.to_account_info(),
+        &ctx.accounts.vrf_identity.to_account_info(),
+        ctx.bumps.vrf_identity,
+        &ctx.accounts.vrf_queue.to_account_info(),
         &ctx.accounts.system_program.to_account_info(),
+        &ctx.accounts.slot_hashes.to_account_info(),
+        &ctx.accounts.round.key(),
         seed,
     )?;
     let outlay = before.saturating_sub(ctx.accounts.cranker.lamports());
 
-    // Most of that outlay is rent ORAO returns to the signer directly when the
-    // oracles answer, so only the remainder is reimbursed.
-    let cost = vrf::unrecovered_cost(outlay, &ctx.accounts.vrf_request.to_account_info())?;
+    // Nothing is held back and nothing comes back - there is no per-request
+    // account any more - so the whole outlay is the cost.
+    let cost = vrf::unrecovered_cost(outlay);
     let paid = cost.min(ctx.accounts.config.protocol_accrued);
 
     // Latch before paying: a failed transfer reverts the whole transaction
@@ -297,7 +271,8 @@ pub fn draw_round(ctx: Context<DrawRound>, seed_slot: u64) -> Result<()> {
         let round = &mut ctx.accounts.round;
         round.seed = seed;
         round.seed_slot = seed_slot;
-        round.randomness = randomness;
+        // `randomness` stays zero: the draw does not exist yet, and only
+        // `consume_randomness` may write it.
         round.status = RoundStatus::Requested;
         round.closed_slot = clock.slot;
         round.requested_slot = clock.slot;
@@ -329,7 +304,6 @@ pub fn draw_round(ctx: Context<DrawRound>, seed_slot: u64) -> Result<()> {
         round: ctx.accounts.round.key(),
         seed,
         seed_slot,
-        randomness,
         member_count: members,
         first_push_id: ctx.accounts.round.first_push_id,
         stake: ctx.accounts.round.stake,
@@ -344,7 +318,6 @@ pub fn draw_round(ctx: Context<DrawRound>, seed_slot: u64) -> Result<()> {
         round_id,
         round: ctx.accounts.round.key(),
         payer: ctx.accounts.cranker.key(),
-        randomness,
         cost,
         reimbursed: paid,
         member_count: members,
@@ -355,13 +328,103 @@ pub fn draw_round(ctx: Context<DrawRound>, seed_slot: u64) -> Result<()> {
     Ok(())
 }
 
+// ------------------------------------------------------------------- callback
+
+/// Receive a round's draw from the VRF program.
+///
+/// This is the one instruction in the program an outside program invokes, and
+/// the only writer of [`RoundStatus::Drawn`]. It moves no money, touches no
+/// star and no push: it writes 32 bytes and a status, and everything else is
+/// decided later by `resolve_push` reading them.
+///
+/// ## Why this cannot be forged
+///
+/// Three independent facts have to hold before a draw lands on a round, and
+/// each one is checked here or fixed at request time:
+///
+/// * **The caller is the VRF program.** `vrf_identity` is pinned to
+///   [`vrf::callback_identity`], a PDA derived under the VRF program's own id
+///   and scoped to *this* program. Only that program can produce a signature
+///   for it, and the VRF program only does so after verifying an oracle's RFC
+///   9381 proof against a request in its queue. This constraint is the whole of
+///   the integrity argument; it is the direct successor of the ORAO
+///   integration's derived-address pin.
+/// * **The round is the one that asked.** `draw_round` names this round in the
+///   request's callback account list, so the VRF program can only hand the
+///   result back to that round. The seeds constraint below additionally proves
+///   the account is the PDA its own contents claim to be.
+/// * **The draw is written once.** Only a `Requested` round is accepted, and
+///   this instruction leaves it `Drawn`, so a replayed callback finds the wrong
+///   status and fails. The same check rejects a late callback for a round that
+///   already expired - whose members may already have been refunded - which is
+///   the case that would otherwise pay out twice.
+///
+/// Nothing here trusts the randomness to be *good*; that is the VRF's job and
+/// the trust assumption. What is enforced is that it is the answer to the
+/// question this round actually asked.
+#[derive(Accounts)]
+pub struct ConsumeRandomness<'info> {
+    /// The VRF program's scoped identity for this program, signing the callback.
+    ///
+    /// Account 0 because that is where the VRF program puts it: it builds the
+    /// callback as `[identity] ++ the accounts named at request time`.
+    #[account(
+        address = vrf::callback_identity() @ SoldustError::InvalidVrfCallbackIdentity,
+    )]
+    pub vrf_identity: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [ROUND_SEED, &round.star_id.to_le_bytes(), &round.round_id.to_le_bytes()],
+        bump = round.bump,
+    )]
+    pub round: Account<'info, Round>,
+}
+
+pub fn consume_randomness(ctx: Context<ConsumeRandomness>, randomness: [u8; 32]) -> Result<()> {
+    let clock = Clock::get()?;
+
+    // Write-once, and the reason an expired round cannot be revived: `Expired`
+    // is not `Requested`, so a draw that arrives after the escape hatch fired
+    // is refused rather than settled against members who already refunded.
+    require!(
+        ctx.accounts.round.status == RoundStatus::Requested,
+        SoldustError::RoundNotRequested
+    );
+
+    // All-zero is the byte pattern an undrawn round already carries, so storing
+    // it would make `Drawn` and "no draw yet" indistinguishable to every reader
+    // off chain. The oracle hands us `sha256(vrf_output)`, so this is
+    // unreachable in practice - it is here to keep that convention total rather
+    // than because a zero draw is expected.
+    require!(randomness != [0u8; 32], SoldustError::ZeroRandomness);
+
+    let round = &mut ctx.accounts.round;
+    round.randomness = randomness;
+    round.status = RoundStatus::Drawn;
+
+    emit!(RoundDrawn {
+        star_id: round.star_id,
+        round_id: round.round_id,
+        round: round.key(),
+        seed: round.seed,
+        randomness,
+        member_count: round.member_count,
+        first_push_id: round.first_push_id,
+        requested_slot: round.requested_slot,
+        drawn_slot: clock.slot,
+        drawn_ts: clock.unix_timestamp,
+    });
+    Ok(())
+}
+
 // -------------------------------------------------------------------- voiding
 
 /// Void a round that has stalled, so its members can take their stake back.
 ///
 /// This is the reason a star cannot be frozen forever. Two things can stall a
-/// round - nobody buys its draw, or ORAO never answers - and both end here after
-/// [`ROUND_EXPIRY_SLOTS`](crate::constants::ROUND_EXPIRY_SLOTS).
+/// round - nobody buys its draw, or no oracle ever answers - and both end here
+/// after [`ROUND_EXPIRY_SLOTS`](crate::constants::ROUND_EXPIRY_SLOTS).
 /// Every member then refunds in full through `resolve_push`, in `push_id` order
 /// like any other resolution, without needing randomness, and the star carries
 /// on with a fresh round.
@@ -369,6 +432,14 @@ pub fn draw_round(ctx: Context<DrawRound>, seed_slot: u64) -> Result<()> {
 /// It is always taken blind. A round whose draw has already landed cannot be
 /// voided, so nobody can look at an unfavourable roll and cancel out of it; and
 /// while the draw is still pending, by definition nobody knows what it says.
+///
+/// That guarantee used to require parsing ORAO's account and deciding what an
+/// unreadable answer meant - a defensive branch that had to void the round,
+/// because refusing to would have closed the escape hatch exactly when the
+/// oracle was the broken thing. Under the push model it is a status comparison:
+/// [`Round::stalled_since`] puts a `Drawn` round beyond any expiry slot, so a
+/// landed draw is structurally unvoidable and there is no foreign layout left
+/// to get wrong.
 #[derive(Accounts)]
 pub struct ExpireRound<'info> {
     pub cranker: Signer<'info>,
@@ -386,11 +457,6 @@ pub struct ExpireRound<'info> {
         bump = round.bump,
     )]
     pub round: Account<'info, Round>,
-
-    /// CHECK: ORAO randomness for this round. Read-only, and only to confirm
-    /// the draw has *not* landed. Ignored while the round never got as far as
-    /// being requested, in which case the address is still default.
-    pub vrf_request: UncheckedAccount<'info>,
 }
 
 pub fn expire_round(ctx: Context<ExpireRound>) -> Result<()> {
@@ -410,33 +476,9 @@ pub fn expire_round(ctx: Context<ExpireRound>) -> Result<()> {
     );
 
     // A landed draw is a usable draw, however late it was: settle it, do not
-    // void it. Only meaningful once the round was actually requested - before
-    // that `round.randomness` is either default or points at an account ORAO
-    // never created.
-    //
-    // A draw that cannot be *read* is not a landed draw. `read_fulfilled` errors
-    // rather than returning `None` for a wrong owner, a moved discriminator, an
-    // unknown enum tag, a short account or a seed mismatch, and propagating any
-    // of those here would close the escape hatch precisely when it is needed:
-    // the whole point of this instruction is to get players out when the oracle
-    // is the thing that broke, and "answered in a shape we cannot parse" is one
-    // of the ways it breaks. So an unreadable account voids the round, which is
-    // safe in both directions - the address is pinned to `round.randomness`, so
-    // nobody can substitute a broken account to duck a roll, and the settle path
-    // refuses the same account anyway.
-    if ctx.accounts.round.status == RoundStatus::Requested {
-        require_keys_eq!(
-            ctx.accounts.vrf_request.key(),
-            ctx.accounts.round.randomness,
-            SoldustError::RandomnessAccountMismatch
-        );
-        let landed = vrf::read_fulfilled(
-            &ctx.accounts.vrf_request.to_account_info(),
-            &ctx.accounts.round.seed,
-        )
-        .unwrap_or(None);
-        require!(landed.is_none(), SoldustError::RoundNotExpired);
-    }
+    // void it. `expirable_at` above already enforces that - a `Drawn` round
+    // reports an unreachable stall slot - so there is nothing further to check
+    // here and no oracle account to read.
 
     // A round that never got sealed still holds the star's round counter, so
     // release it here or new pushes would keep piling into a dead batch.

@@ -1,8 +1,10 @@
 //! # Central game configuration
 //!
-//! These numbers **are** the game. They are compiled in. There is no
-//! instruction that can retune them, and mainnet upgrade authority is `None`,
-//! so the deployed binary is the whole rulebook.
+//! These numbers **are** the game. They are compiled in: there is no
+//! instruction that can retune them, so the deployed binary is the whole
+//! rulebook. Changing the odds means shipping a new binary, which on mainnet
+//! means a Squads multisig - not a key somebody holds, and not something a
+//! live game can do to a star already in flight.
 //!
 //! Nothing reads these from an account. Handlers call [`economics`] /
 //! [`lifecycle`]. A live [`Star`](crate::state::Star) copies the lifecycle at

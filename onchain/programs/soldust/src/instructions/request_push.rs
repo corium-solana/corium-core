@@ -7,7 +7,7 @@
 //! flat `prize_bps` return with no oracle line item at all.
 //!
 //! Joining a round is what commits the player before the draw exists. The
-//! round's ORAO seed is not decidable until `close_round` seals it and samples
+//! round's seed is not decidable until `draw_round` seals it and samples
 //! a slot hash, so at the moment this signature lands there is nothing to
 //! grind - not by the player, and not by anyone watching the mempool, because
 //! there is no per-push seed here for a bystander to burn.

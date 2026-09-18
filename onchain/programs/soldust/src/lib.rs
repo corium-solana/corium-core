@@ -37,7 +37,7 @@
 //!            |  draw_round         seal the batch once it is worth a draw and
 //!            |                     buy that draw in the same transaction, paid
 //!            |                     out of the rake, crank reimbursed
-//!            |  (ORAO fulfills off-chain)
+//!            |  consume_randomness  the VRF program calls back with the result
 //!            v
 //!   resolve_push  (permissionless, once per member, in push_id order)
 //!            |
@@ -56,8 +56,8 @@
 //!
 //! ## Randomness is bought per round, not per push
 //!
-//! ORAO charges per request no matter how many people are waiting on it, so a
-//! draw is shared by every push queued while a round was open and each member
+//! The oracle charges per request no matter how many people are waiting on it,
+//! so a draw is shared by every push queued while a round was open and each member
 //! rolls a labelled hash of it. A round of twenty costs a twentieth of a request
 //! each. It is also *faster* than one-request-per-push ever was, because a queue
 //! of twenty used to need twenty sequential fulfilments and now needs one.
@@ -187,27 +187,42 @@ pub mod soldust {
     }
 
     /// Seal the star's open round and buy the one draw that serves it, in a
-    /// single transaction so the seed is never public while its ORAO address is
-    /// still free. Permissionless; the signer fronts ORAO and is reimbursed from
+    /// single transaction so the seed is never public while still unspent.
+    /// Permissionless; the signer fronts the request fee and is reimbursed from
     /// `protocol_accrued`, capped at what the rake actually holds so the game
     /// cannot stall for lack of funds.
     ///
     /// Allowed once the round's window has elapsed or it is already full enough
     /// that waiting would only add latency - and once the batch's own rake covers
-    /// what ORAO currently charges. A round that has not earned its draw yet stays
-    /// open and keeps collecting members.
+    /// the request fee. A round that has not earned its draw yet stays open and
+    /// keeps collecting members.
     ///
     /// * `seed_slot` - a slot within the last `SLOT_HASH_LOOKBACK`, whose recorded
-    ///   hash goes into the seed. The caller names it because the ORAO account
-    ///   address follows from the seed and Solana needs that address up front; the
-    ///   program verifies the slot against `SlotHashes`.
+    ///   hash goes into the seed. The caller names it so the derivation stays
+    ///   replayable off-chain; the program verifies the slot against `SlotHashes`.
     pub fn draw_round(ctx: Context<DrawRound>, seed_slot: u64) -> Result<()> {
         instructions::round::draw_round(ctx, seed_slot)
     }
 
+    /// Receive a round's draw. **Invoked by the MagicBlock VRF program only**,
+    /// never by a user: the callback must be signed by the VRF program's scoped
+    /// identity PDA for this program, which nothing else can produce.
+    ///
+    /// Writes the 32-byte draw onto the round it was requested for and moves it
+    /// to `Drawn`, which is the only status `resolve_push` will settle under.
+    /// Write-once, so a replayed or late callback - including one for a round
+    /// that already expired into refunds - is refused.
+    ///
+    /// * `randomness` - the oracle's verified output, appended to our
+    ///   discriminator by the VRF program after it checks the proof.
+    pub fn consume_randomness(ctx: Context<ConsumeRandomness>, randomness: [u8; 32]) -> Result<()> {
+        instructions::round::consume_randomness(ctx, randomness)
+    }
+
     /// Void a round that has been stalled for `ROUND_EXPIRY_SLOTS`, making all
-    /// of its members refundable. Permissionless. Refuses if the draw has
-    /// already landed, so it can never be used to duck an unfavourable roll.
+    /// of its members refundable. Permissionless. A round whose draw has landed
+    /// is `Drawn` and reports no stall slot at all, so this can never be used to
+    /// duck an unfavourable roll.
     pub fn expire_round(ctx: Context<ExpireRound>) -> Result<()> {
         instructions::round::expire_round(ctx)
     }
@@ -243,8 +258,8 @@ pub mod soldust {
 
     /// Finish a star that stopped gaining mass for `STALL_SECS` - a day if it
     /// never left its nursery. Permissionless, and the liveness floor of the
-    /// whole program: it is what guarantees no SOL can be stuck if ORAO dies or
-    /// the game does.
+    /// whole program: it is what guarantees no SOL can be stuck if the oracle
+    /// dies or the game does.
     ///
     /// Feeders then claim the prize-side value of their own feeds through
     /// `claim_hole_share`; the rest of the pot recycles into the next star. So a

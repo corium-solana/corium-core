@@ -5,12 +5,12 @@
 //! answered, and `stranded` in [`resolve_push`](super::resolve_push) closes a
 //! star that can no longer be pushed. Neither covers the permanent case:
 //!
-//! * ORAO goes dark for good. Rounds still open and expire, so stakes keep
-//!   coming back - but a refund adds no mass, so the star never dies, never
-//!   reaches the hole cap, and never finishes. The pot paid in by every push
-//!   that settled *before* the outage has no route out: no kill to pay a
+//! * The oracle goes dark for good. Rounds still open and expire, so stakes
+//!   keep coming back - but a refund adds no mass, so the star never dies,
+//!   never reaches the hole cap, and never finishes. The pot paid in by every
+//!   push that settled *before* the outage has no route out: no kill to pay a
 //!   winner, no Event Horizon to pay the feeders. Feeders' SOL is stuck, and
-//!   with no upgrade authority there is nothing to fix it with.
+//!   an upgrade is not a fix a live star can wait for.
 //! * The game simply dies. Nobody pushes again. Same shape, same stuck pot,
 //!   and it does not even need anything to be broken.
 //!

@@ -15,7 +15,6 @@
 
 import { PublicKey } from '@solana/web3.js';
 
-import { fetchRandomness } from '../../shared/chain/orao.js';
 import { advanceRounds } from '../../shared/chain/crank.js';
 import { resolvePush } from '../../shared/chain/actions.js';
 import { errSummary } from '../../shared/chain/send.js';
@@ -127,6 +126,18 @@ export async function resolveAll(
     return roundCache.get(key);
   };
 
+  /**
+   * A round's draw as hex, for the history record. Empty until the callback has
+   * landed, which is also every refund path - those settle without a draw at
+   * all, so there is genuinely nothing to record.
+   */
+  const drawHex = (round: any): string => {
+    const draw = round?.randomness;
+    if (!draw) return '';
+    const bytes = Buffer.from(draw);
+    return bytes.some((b) => b !== 0) ? bytes.toString('hex') : '';
+  };
+
   const settleOne = async (p: (typeof pending)[number]) => {
     const a = p.account;
     const round = await loadRound(a.starId, a.roundId);
@@ -152,7 +163,7 @@ export async function resolveAll(
     if (historyEnabled()) {
       try {
         await attachRentToSettle(programId.toBase58(), p.publicKey.toBase58(), {
-          randomness: round?.randomness?.toBase58() ?? '',
+          randomness: drawHex(round),
         });
       } catch (e: any) {
         console.warn(`rent record failed push #${a.pushId}: ${e.message ?? e}`);
@@ -171,10 +182,11 @@ export async function resolveAll(
     const status = enumName(round?.status);
     if (!round) return { ready: false, why: 'round account missing' };
     if (status === 'expired') return { ready: true, why: '' };
-    if (status !== 'requested') return { ready: false, why: `round ${status}, no draw yet` };
-    const r = await fetchRandomness(connection, round.randomness);
-    if (!r.exists) return { ready: false, why: 'draw not bought yet' };
-    if (!r.fulfilled) return { ready: false, why: 'draw not fulfilled yet' };
+    if (status === 'open') return { ready: false, why: 'round open, draw not bought yet' };
+    if (status === 'requested') {
+      return { ready: false, why: 'draw bought, waiting on the oracle callback' };
+    }
+    if (status !== 'drawn') return { ready: false, why: `round ${status}, no draw yet` };
     return { ready: true, why: '' };
   };
 
@@ -277,7 +289,7 @@ export async function resolveAll(
             starId: p.account.starId.toString(),
             pushId: p.account.pushId.toString(),
             lamports,
-            randomness: round?.randomness?.toBase58() ?? '',
+            randomness: drawHex(round),
           });
         }
       } catch (e: any) {
@@ -287,23 +299,24 @@ export async function resolveAll(
   }
 
   // Anything still pending is waiting on its round's draw, so the caller should
-  // watch the round's ORAO account rather than each push's - one fulfilment now
-  // unblocks a whole batch.
+  // watch the *round* - one callback now unblocks a whole batch.
+  //
+  // There is no separate oracle account to subscribe to any more: the VRF
+  // program's callback writes the draw straight onto the round, so the round is
+  // both the thing being waited on and the account that changes when the wait
+  // ends.
   const pendingRandomness: PublicKey[] = [];
   const seen = new Set<string>();
-  for (const address of watching) {
-    if (seen.has(address.toBase58())) continue;
-    seen.add(address.toBase58());
+  const watch = (address: PublicKey) => {
+    const k = address.toBase58();
+    if (seen.has(k)) return;
+    seen.add(k);
     pendingRandomness.push(address);
-  }
+  };
+  for (const address of watching) watch(address);
   for (const p of pending) {
     if (settled.has(p.publicKey.toBase58())) continue;
-    const round = await loadRound(p.account.starId, p.account.roundId);
-    const address = round?.randomness;
-    if (!address || address.equals(PublicKey.default)) continue;
-    if (seen.has(address.toBase58())) continue;
-    seen.add(address.toBase58());
-    pendingRandomness.push(address);
+    watch(roundPda(programId, p.account.starId, p.account.roundId));
   }
 
   return { resolved, waiting, pendingRandomness, sealed, drawn, voided, thin };

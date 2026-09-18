@@ -51,20 +51,32 @@ pub enum RoundStatus {
     /// Accepting pushes. Its draw does not exist and its seed is not yet
     /// decidable by anyone.
     Open,
-    /// Sealed, and its ORAO request bought in the same transaction. This is the
-    /// only status a push may settle under, which is what stops a randomness
-    /// account that somebody else created from ever being read as this round's
-    /// draw.
+    /// Sealed, and its VRF request filed in the same transaction. The draw has
+    /// not arrived yet, so no push may settle here.
     ///
-    /// There is deliberately no state between `Open` and this one. A sealed round
-    /// with an unbought draw would publish its seed while the ORAO address it
-    /// derives was still unoccupied, and anyone could then take that address for
-    /// the price of a request and leave the round permanently undrawable.
+    /// There is deliberately no state between `Open` and this one: the seed is
+    /// decided and spent in a single instruction, so it is never public while
+    /// still unspent.
     Requested,
     /// Voided after [`ROUND_EXPIRY_SLOTS`] without a usable draw. Every member
     /// refunds in full, in `push_id` order like any other resolution, and the
     /// star lives on with a new round.
     Expired,
+    /// The oracle called back and its randomness is on the round. This is the
+    /// only status a push may settle under.
+    ///
+    /// Appended last rather than filed after `Requested` so the existing Borsh
+    /// indices did not move - `Open`, `Requested` and `Expired` are still 0, 1
+    /// and 2 on the wire. A unit-only enum is one tag byte whatever its variant
+    /// count, so this costs no space either. Nothing compares these ordinally;
+    /// every reader pattern-matches, so the out-of-order index is invisible.
+    ///
+    /// The only writer is [`crate::consume_randomness`], which the VRF program
+    /// must sign for with [`crate::vrf::callback_identity`]. That is what stops
+    /// randomness this program did not ask for from ever being read as a
+    /// round's draw, and it replaces the address-derivation check the pull-based
+    /// ORAO integration relied on.
+    Drawn,
 }
 
 /// Singleton game state: where the money is owed, and which star is live.
@@ -282,8 +294,8 @@ impl Star {
 
 /// One VRF draw, shared by every push queued while it was open.
 ///
-/// This is what makes the oracle affordable: ORAO charges per request, not per
-/// player, so a round of `n` pushes costs `1/n` of a request each. It is also
+/// This is what makes the oracle affordable: the oracle charges per request,
+/// not per player, so a round of `n` pushes costs `1/n` of a request each. It is also
 /// what makes the randomness cheap to *verify* - there is one draw and one
 /// published seed per batch, and each member's roll is a labelled hash of it.
 ///
@@ -316,19 +328,29 @@ pub struct Round {
     /// The player-supplied half of the seed input, written once by the member
     /// who opened the round and never touched again.
     ///
-    /// Frozen rather than accumulated because `draw_round` derives the ORAO
-    /// account address from it, and that address has to be named in the
-    /// transaction before it runs. A field that moved with every arrival meant
-    /// any push landing between a crank reading this round and its draw executing
-    /// reverted the draw - no attack needed, just traffic, and the busier the
-    /// star the less often a draw could land at all.
+    /// Frozen rather than accumulated because the seed must not move once a
+    /// draw can be attempted against it. A field that changed with every
+    /// arrival meant any push landing between a crank reading this round and
+    /// its draw executing changed the seed under it - no attack needed, just
+    /// traffic, and the busier the star the less often a draw could land.
     pub entropy: [u8; 32],
-    /// The ORAO seed, decided by `draw_round` in the same transaction that buys
-    /// the randomness. Zero while the round is open, which is the honest
-    /// representation: it is genuinely not decided yet.
+    /// The VRF `caller_seed`, decided by `draw_round` in the same transaction
+    /// that buys the randomness. Zero while the round is open, which is the
+    /// honest representation: it is genuinely not decided yet.
     pub seed: [u8; 32],
-    /// ORAO randomness account for `seed`. Default while open.
-    pub randomness: Pubkey,
+    /// The draw itself, written by [`crate::consume_randomness`] when the
+    /// oracle calls back. Zero until then.
+    ///
+    /// This field held a `Pubkey` under the pull-based ORAO integration - the
+    /// address of the randomness account to read - and a `Pubkey` is 32 raw
+    /// Borsh bytes, exactly what MagicBlock delivers. So the push model reuses
+    /// the slot in place: same offset, same `INIT_SPACE`, same account size, no
+    /// migration. `status` is what says whether these bytes mean anything, not
+    /// their value.
+    ///
+    /// Widened to 64 bytes by [`crate::vrf::widen`] before it reaches the roll,
+    /// which is defined over the shape ORAO used to deliver.
+    pub randomness: [u8; 32],
     /// Slot whose hash went into `seed`, so the derivation can be replayed
     /// off-chain from public data alone.
     pub seed_slot: u64,
@@ -384,12 +406,25 @@ impl Round {
         match self.status {
             RoundStatus::Open => self.opened_slot,
             RoundStatus::Requested => self.requested_slot,
-            RoundStatus::Expired => u64::MAX,
+            // Terminal: neither has a stall to measure. The sentinel is only a
+            // belt to `expirable_at`'s braces, which refuses both statuses
+            // outright - `slot >= u64::MAX` is *true* at `slot == u64::MAX`, so
+            // a sentinel on its own would not actually hold at the boundary.
+            RoundStatus::Drawn | RoundStatus::Expired => u64::MAX,
         }
     }
 
+    /// Both terminal statuses are refused here rather than left to the
+    /// arithmetic. `Expired` because voiding twice would refund twice, and
+    /// `Drawn` because a landed draw is a usable draw however late it was -
+    /// letting one be voided is precisely how a member would duck an
+    /// unfavourable roll, so it must not depend on a slot counter never
+    /// reaching its maximum.
     pub fn expirable_at(&self, slot: u64) -> bool {
-        if self.member_count == 0 || self.status == RoundStatus::Expired {
+        if self.member_count == 0
+            || self.status == RoundStatus::Expired
+            || self.status == RoundStatus::Drawn
+        {
             return false;
         }
         slot >= self.stalled_since().saturating_add(ROUND_EXPIRY_SLOTS)
@@ -413,7 +448,9 @@ impl Round {
     /// This is what makes the house's edge structural rather than hopeful. Every
     /// draw it ever buys is already paid for by the stake behind that draw, so
     /// the float cannot be bled by volume - however small the pushes are, and
-    /// whatever ORAO decides to charge.
+    /// whatever the oracle charges. The cost is a parameter here rather than a
+    /// constant precisely so that swapping oracles reprices the bar instead of
+    /// invalidating the argument.
     pub fn covers_draw(&self, draw_cost: u64, protocol_bps: u16) -> bool {
         self.rake(protocol_bps) >= draw_cost
     }
@@ -539,7 +576,7 @@ mod tests {
             round_id: 0,
             entropy: [0; 32],
             seed: [0; 32],
-            randomness: Pubkey::default(),
+            randomness: [0; 32],
             seed_slot: 0,
             member_count: members,
             stake: 0,
@@ -592,6 +629,18 @@ mod tests {
         }
     }
 
+    /// The counterpart, and the property that replaced parsing a foreign oracle
+    /// account: once the callback has landed the round is out of the expiry
+    /// path entirely, so nobody can look at an unfavourable draw and void it.
+    #[test]
+    fn a_drawn_round_can_never_be_voided() {
+        let mut r = round(RoundStatus::Drawn, 3);
+        r.requested_slot = 3_000;
+        assert_eq!(r.stalled_since(), u64::MAX);
+        assert!(!r.expirable_at(u64::MAX));
+        assert!(!r.closeable_at(u64::MAX));
+    }
+
     /// Voiding is terminal. Re-voiding would refund a member twice if the
     /// handler ever stopped checking, so the predicate refuses on its own.
     #[test]
@@ -605,9 +654,24 @@ mod tests {
     #[test]
     fn only_an_open_round_is_open() {
         assert!(round(RoundStatus::Open, 1).is_open());
-        for s in [RoundStatus::Requested, RoundStatus::Expired] {
+        for s in [
+            RoundStatus::Requested,
+            RoundStatus::Expired,
+            RoundStatus::Drawn,
+        ] {
             assert!(!round(s, 1).is_open());
         }
+    }
+
+    /// The invariant the whole oracle swap rests on: reinterpreting
+    /// `randomness` from a `Pubkey` to `[u8; 32]` must not move a byte, because
+    /// the deployed program is upgraded in place over live `Round` accounts.
+    /// Both are 32 raw Borsh bytes at the same offset, so the total must still
+    /// be what it was under ORAO.
+    #[test]
+    fn the_round_layout_did_not_move() {
+        assert_eq!(Round::INIT_SPACE, 210);
+        assert_eq!(RoundStatus::INIT_SPACE, 1, "a unit enum is one tag byte");
     }
 
     /// The rent-reclaim test. A round is done exactly when the settle cursor has
@@ -624,13 +688,12 @@ mod tests {
         assert!(r.is_drained(11), "and it never un-drains");
     }
 
-    /// ORAO's mainnet price at the time of writing: a 500_000 lamport request
-    /// fee plus the rent that stays locked in the fulfilled account. Only ever a
-    /// stand-in for the live figure `close_round` reads.
-    const DRAW_COST: u64 = 2_178_245;
+    /// MagicBlock's request fee, which is the whole of what a draw costs now
+    /// that there is no per-request account entombing rent.
+    const DRAW_COST: u64 = crate::vrf::VRF_REQUEST_FEE;
 
     /// The economic gate. A round is drawable once its own rake pays for the
-    /// draw, and one minimum push is nowhere near enough - which is the entire
+    /// draw, and one minimum push is still not enough - which is the entire
     /// reason rounds are held open rather than sealed on the window alone.
     #[test]
     fn a_round_must_pay_for_its_own_draw() {
@@ -641,14 +704,13 @@ mod tests {
         assert!(
             !r.covers_draw(DRAW_COST, bps),
             "one minimum push cannot buy a draw; if it could there would be \
-             nothing to batch"
+             nothing to batch and the gate could be deleted"
         );
 
-        // Seven minimum pushes clear it, six do not: the bar is `cost / 3.14%`,
-        // which lands just under 0.07 SOL.
-        r.stake = 6 * PUSH_STEP;
-        assert!(!r.covers_draw(DRAW_COST, bps));
-        r.stake = 7 * PUSH_STEP;
+        // Two minimum pushes clear it, one does not. Under ORAO's
+        // 2_178_245-lamport draw this took seven, which is what made quiet
+        // stars slow: the shortfall held the round open long past its window.
+        r.stake = 2 * PUSH_STEP;
         assert!(r.covers_draw(DRAW_COST, bps));
 
         // One large push needs no company at all.
@@ -656,10 +718,10 @@ mod tests {
         assert!(r.covers_draw(DRAW_COST, bps));
     }
 
-    /// The bar is derived from live state, not compiled in, so an ORAO reprice
-    /// moves it rather than breaking anything: rounds just need more members.
+    /// The bar is a pure function of the price, so a reprice moves it rather
+    /// than breaking anything: rounds just need more members.
     #[test]
-    fn the_bar_tracks_whatever_orao_charges() {
+    fn the_bar_tracks_whatever_the_oracle_charges() {
         let bps = crate::game_config::economics().protocol_bps;
         let mut r = round(RoundStatus::Open, 1);
         r.stake = LAMPORTS_PER_SOL;

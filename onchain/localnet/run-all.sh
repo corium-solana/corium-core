@@ -9,6 +9,7 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ONCHAIN="$(dirname "$HERE")"
 
 SCENARIOS=(
   00-smoke
@@ -29,7 +30,12 @@ SCENARIOS=(
 # artifact `anchor build` just produced. Built on demand rather than kept in the
 # tree, because a stale copy would be testing yesterday's program.
 SHORT_STALLS="$HERE/soldust-short-stalls.so"
-if [[ ! -f "$SHORT_STALLS" ]]; then
+# Rebuilt when it is missing *or* older than any program source, because "built
+# on demand" is only worth anything if a copy left in the tree cannot go stale.
+# One did, during the MagicBlock migration, and c3 spent a suite run reporting
+# a failure that belonged to the previous oracle.
+if [[ ! -f "$SHORT_STALLS" ]] ||
+  [[ -n "$(find "$ONCHAIN/programs/soldust/src" -name '*.rs' -newer "$SHORT_STALLS" -print -quit)" ]]; then
   echo "building the short-stalls artifact for c3-stalled-star" >&2
   # Through `bash` rather than directly: a checkout that lost the exec bit should
   # not cost the suite a scenario.

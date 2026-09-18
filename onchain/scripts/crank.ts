@@ -3,8 +3,8 @@
  *
  *   yarn crank --wallet wallets/crank.json --interval 4 --auto-next-star
  *
- * Wakes on soldust logs (new push → maybe seal a round) and on each round's
- * randomness account (ORAO fulfill → resolve the batch). A round seals on a
+ * Wakes on soldust logs (new push → maybe seal a round) and on each requested
+ * round's own account (VRF callback → resolve the batch). A round seals on a
  * slot count rather than an event, so `--interval` has to stay shorter than
  * ROUND_WINDOW_SLOTS or every round would be sealed late; it also covers
  * dropped websocket events, closes, and next-star.

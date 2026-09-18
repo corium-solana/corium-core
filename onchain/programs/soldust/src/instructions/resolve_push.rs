@@ -3,8 +3,10 @@
 //! The player does not sign here. Anyone - our crank, another player, a
 //! stranger - can submit this, and the outcome is identical either way
 //! because everything that matters is read from accounts the caller cannot
-//! forge: the push PDA, the star PDA, the round PDA and the ORAO randomness
-//! account.
+//! forge: the push PDA, the star PDA and the round PDA. The draw is one of the
+//! things read off the round - there is no oracle account in this instruction
+//! at all, because the oracle wrote its answer onto the round before anyone got
+//! here.
 //!
 //! Two paths:
 //!
@@ -180,12 +182,6 @@ pub struct ResolvePush<'info> {
     #[account(mut, address = pending_push.player @ SoldustError::PushPlayerMismatch)]
     pub player_wallet: UncheckedAccount<'info>,
 
-    /// CHECK: ORAO randomness for this push's round. Ownership, discriminator
-    /// and seed are all re-checked before use, and `round.status` must be
-    /// `Requested`, so only a draw this program bought can ever be read.
-    #[account(address = round.randomness @ SoldustError::RandomnessAccountMismatch)]
-    pub vrf_request: UncheckedAccount<'info>,
-
     /// Both of these were created and paid for by `request_push`, so the
     /// resolver never funds an account here.
     #[account(
@@ -325,21 +321,27 @@ pub fn resolve_push(ctx: Context<ResolvePush>) -> Result<()> {
     }
 
     // ------------------------------------------------ live star: settle path
-    // Only a draw this program bought may be read. A round that is still Open
-    // or Closed has no draw of ours, whatever happens to sit at its address.
+    // Only a draw this program asked for may be read, and `Drawn` is the only
+    // status that says one arrived. An `Open` round was never even sealed; a
+    // `Requested` one is still waiting on the oracle. Neither has a draw.
+    //
+    // The two are told apart so the caller learns which it is: "not sealed yet"
+    // is a crank ordering mistake, "not answered yet" is just a retry.
     require!(
-        ctx.accounts.round.status == RoundStatus::Requested,
+        ctx.accounts.round.status != RoundStatus::Open,
         SoldustError::RoundNotRequested
+    );
+    require!(
+        ctx.accounts.round.status == RoundStatus::Drawn,
+        SoldustError::RandomnessNotReady
     );
 
     let mass_before = ctx.accounts.star.total_mass;
     let accepted = economics.accepted_settle_amount(amount, mass_before);
 
-    let randomness = vrf::read_fulfilled(
-        &ctx.accounts.vrf_request.to_account_info(),
-        &ctx.accounts.round.seed,
-    )?
-    .ok_or(SoldustError::RandomnessNotReady)?;
+    // Widened to the 64-byte shape the roll and the death record are defined
+    // over, so the math is bit-for-bit what it was under ORAO.
+    let randomness = vrf::widen(&ctx.accounts.round.randomness);
 
     let excess = amount - accepted;
     if excess > 0 {
